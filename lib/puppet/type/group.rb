@@ -30,6 +30,10 @@ module Puppet
                 :group_removed
             end
         end
+        
+        autorequire(:user) do
+            self[:members]
+        end
 
         newproperty(:gid) do
             desc "The group ID.  Must be specified numerically.  If not
