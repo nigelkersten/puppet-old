@@ -100,8 +100,9 @@ options = [
     [ "--help",     "-h",   GetoptLong::NO_ARGUMENT ]
 ]
 
-# Load facts from Facter
+# Load facts from Facter.
 Facter.loadfacts
+
 # Add all of the config parameters as valid options.
 Puppet.settings.addargs(options)
 
