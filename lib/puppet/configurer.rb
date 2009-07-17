@@ -128,6 +128,7 @@ class Puppet::Configurer
     # This just passes any options on to the catalog,
     # which accepts :tags and :ignoreschedules.
     def run(options = {})
+        status = 0
         prepare()
 
         unless catalog = retrieve_catalog
@@ -137,7 +138,12 @@ class Puppet::Configurer
 
         begin
             benchmark(:notice, "Finished catalog run") do
-                catalog.apply(options)
+                transaction = catalog.apply(options)
+                if Puppet[:onetime] then
+                    transaction.generate_report
+                    status |= 2 if transaction.report.metrics["changes"][:total] > 0
+                    status |= 4 if transaction.report.metrics["resources"][:failed] > 0
+                end
             end
         rescue => detail
             puts detail.backtrace if Puppet[:trace]
@@ -147,6 +153,7 @@ class Puppet::Configurer
         # Now close all of our existing http connections, since there's no
         # reason to leave them lying open.
         Puppet::Network::HttpPool.clear_http_instances
+        status
     end
 
     private

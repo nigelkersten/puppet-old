@@ -92,6 +92,7 @@ Puppet::Application.new(:puppetd) do
     end
 
     command(:onetime) do
+        status = 0
         unless options[:client]
             $stderr.puts "onetime is specified but there is no client"
             exit(43)
@@ -100,14 +101,14 @@ Puppet::Application.new(:puppetd) do
         @daemon.set_signal_traps
 
         begin
-            @agent.run
+            status = @agent.run
         rescue => detail
             if Puppet[:trace]
                 puts detail.backtrace
             end
             Puppet.err detail.to_s
         end
-        exit(0)
+        exit(status)
     end
 
     command(:main) do

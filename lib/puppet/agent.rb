@@ -39,6 +39,7 @@ class Puppet::Agent
 
     # Perform a run with our client.
     def run(*args)
+        status = 0
         if running?
             Puppet.notice "Run of %s already in progress; skipping" % client_class
             return
@@ -50,12 +51,13 @@ class Puppet::Agent
         splay
         with_client do |client|
             begin
-                sync.synchronize { lock { client.run(*args) } }
+                sync.synchronize { lock { status = client.run(*args) } }
             rescue => detail
                 puts detail.backtrace if Puppet[:trace]
                 Puppet.err "Could not run %s: %s" % [client_class, detail]
             end
         end
+        status
     end
 
     def stop
