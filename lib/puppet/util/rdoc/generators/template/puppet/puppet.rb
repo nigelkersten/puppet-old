@@ -538,17 +538,6 @@ IF:description
     </div>
 ENDIF:description
 
-IF:requires
-    <div id="requires-list">
-      <h3 class="section-bar">Required files</h3>
-
-      <div class="name-list">
-START:requires
-      HREF:aref:name:&nbsp;&nbsp;
-END:requires
-      </div>
-    </div>
-ENDIF:requires
 
 IF:toc
     <div id="contents-list">
@@ -560,6 +549,18 @@ END:toc
      </ul>
 ENDIF:toc
    </div>
+
+<!-- if childs -->
+IF:childs
+       <div id="childs">
+         <h3 class="section-bar">Inherited by</h3>
+         <div id="childs-list">
+START:childs
+           <span class="child-name">HREF:aref:name:</span>
+END:childs
+         </div>
+       </div>
+ENDIF:childs
 
 IF:methods
     <div id="method-list">
@@ -600,6 +601,19 @@ END:includes
       </div>
     </div>
 ENDIF:includes
+
+    <!-- if requires -->
+IF:requires
+    <div id="requires">
+      <h3 class="section-bar">Required Classes</h3>
+
+      <div id="requires-list">
+START:requires
+        <span class="require-name">HREF:aref:name:</span>
+END:requires
+      </div>
+    </div>
+ENDIF:requires
 
 START:sections
     <div id="section">

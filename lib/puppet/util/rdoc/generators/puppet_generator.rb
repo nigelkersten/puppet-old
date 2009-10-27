@@ -136,6 +136,15 @@ module Generators
                 @allfiles << { "file" => file, "modules" => modules, "classes" => classes, "methods" => methods, "nodes" => nodes }
             end
 
+            # scan all classes to create the childs references
+            @allclasses.values.each do |klass|
+                if superklass = klass.context.superclass
+                    if superklass = AllReferences[superklass] and (superklass.is_a?(HTMLPuppetClass) or superklass.is_a?(HTMLPuppetNode))
+                        superklass.context.add_child(klass.context)
+                    end
+                end
+            end
+
             @classes = @allclasses.values
         end
 
@@ -320,6 +329,26 @@ module Generators
 
     end
 
+    # This module is used to generate a referenced full name list of ContextUser
+    module ReferencedListBuilder
+        def build_referenced_list(list)
+            res = []
+            list.each do |i|
+                ref = @context.find_symbol(i.name)
+                ref = ref.viewer if ref
+                name = i.respond_to?(:full_name) ? i.full_name : i.name
+                h_name = CGI.escapeHTML(name)
+                if ref and ref.document_self
+                    path = url(ref.path)
+                    res << { "name" => h_name, "aref" => path }
+                else
+                    res << { "name" => h_name }
+                end
+            end
+            res
+        end
+    end
+
     # This module is used to hold/generate a list of puppet resources
     # this is used in HTMLPuppetClass and HTMLPuppetNode
     module ResourceContainer
@@ -360,7 +389,7 @@ module Generators
     end
 
     class HTMLPuppetClass < HtmlClass
-        include ResourceContainer
+        include ResourceContainer, ReferencedListBuilder
 
         def value_hash
             super
@@ -376,12 +405,27 @@ module Generators
                     secdata["resource_list"] = rdl unless rdl.empty?
                 end
             end
+
+            rl = build_require_list(@context)
+            @values["requires"] = rl unless rl.empty?
+
+            cl = build_child_list(@context)
+            @values["childs"] = cl unless cl.empty?
+
             @values
+        end
+
+        def build_require_list(context)
+            build_referenced_list(context.requires)
+        end
+
+        def build_child_list(context)
+            build_referenced_list(context.childs)
         end
     end
 
     class HTMLPuppetNode < ContextUser
-        include ResourceContainer
+        include ResourceContainer, ReferencedListBuilder
 
         attr_reader :path
 
@@ -451,6 +495,12 @@ module Generators
 
             il = build_include_list(@context)
             @values["includes"] = il unless il.empty?
+
+            rl = build_require_list(@context)
+            @values["requires"] = rl unless rl.empty?
+
+            cl = build_child_list(@context)
+            @values["childs"] = cl unless cl.empty?
 
             @values["sections"] = @context.sections.map do |section|
 
@@ -552,6 +602,14 @@ module Generators
             end
 
             @values['infiles'] = files
+        end
+
+        def build_require_list(context)
+            build_referenced_list(context.requires)
+        end
+
+        def build_child_list(context)
+            build_referenced_list(context.childs)
         end
 
         def <=>(other)

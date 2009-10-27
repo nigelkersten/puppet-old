@@ -15,6 +15,8 @@ module RDoc
 class Parser
     extend ParserFactory
 
+    attr_accessor :ast, :input_file_name, :top_level
+
     # parser registration into RDoc
     parse_files_matching(/\.(rb|pp)$/)
 
@@ -38,8 +40,6 @@ class Parser
         scan_top_level(@top_level)
         @top_level
     end
-
-    private
 
     # Due to a bug in RDoc, we need to roll our own find_module_named
     # The issue is that RDoc tries harder by asking the parent for a class/module
@@ -147,14 +147,14 @@ class Parser
 
     # create documentation for include statements we can find in +code+
     # and associate it with +container+
-    def scan_for_include(container, code)
+    def scan_for_include_or_require(container, code)
         code.each do |stmt|
-            scan_for_include(container,stmt.children) if stmt.is_a?(Puppet::Parser::AST::ASTArray)
+            scan_for_include_or_require(container,stmt.children) if stmt.is_a?(Puppet::Parser::AST::ASTArray)
 
-            if stmt.is_a?(Puppet::Parser::AST::Function) and stmt.name == "include"
+            if stmt.is_a?(Puppet::Parser::AST::Function) and ['include','require'].include?(stmt.name)
                 stmt.arguments.each do |included|
-                    Puppet.debug "found include: %s" % included.value
-                    container.add_include(Include.new(included.value, stmt.doc))
+                    Puppet.debug "found #{stmt.name}: #{included.value}"
+                    container.send("add_#{stmt.name}",Include.new(included.value, stmt.doc))
                 end
             end
         end
@@ -220,7 +220,7 @@ class Parser
         code = klass.code.children if klass.code.is_a?(Puppet::Parser::AST::ASTArray)
         code ||= klass.code
         unless code.nil?
-            scan_for_include(cls, code)
+            scan_for_include_or_require(cls, code)
             scan_for_resource(cls, code) if Puppet.settings[:document_all]
         end
 
@@ -241,7 +241,7 @@ class Parser
         code = node.code.children if node.code.is_a?(Puppet::Parser::AST::ASTArray)
         code ||= node.code
         unless code.nil?
-            scan_for_include(n, code)
+            scan_for_include_or_require(n, code)
             scan_for_vardef(n, code)
             scan_for_resource(n, code) if Puppet.settings[:document_all]
         end
@@ -277,8 +277,8 @@ class Parser
 
         # register method into the container
         meth =  AnyMethod.new(declaration, name)
-        container.add_method(meth)
         meth.comment = define.doc
+        container.add_method(meth)
         look_for_directives_in(container, meth.comment) unless meth.comment.empty?
         meth.params = "( " + declaration + " )"
         meth.visibility = :public
@@ -296,7 +296,7 @@ class Parser
                 unless name.empty?
                     document_class(name,klass,container)
                 else # on main class document vardefs
-                    code = klass.code.children unless klass.code.is_a?(Puppet::Parser::AST::ASTArray)
+                    code = klass.code.children if klass.code.is_a?(Puppet::Parser::AST::ASTArray)
                     code ||= klass.code
                     scan_for_vardef(container, code) unless code.nil?
                 end
@@ -337,9 +337,9 @@ class Parser
                     comments += $1 + "\n"
                 elsif line =~ /^[ \t]*Facter.add\(['"](.*?)['"]\)/
                     current_fact = Fact.new($1,{})
-                    container.add_fact(current_fact)
                     look_for_directives_in(container, comments) unless comments.empty?
                     current_fact.comment = comments
+                    container.add_fact(current_fact)
                     current_fact.record_location(@top_level)
                     comments = ""
                     Puppet.debug "rdoc: found custom fact %s" % current_fact.name
