@@ -31,6 +31,10 @@ module Puppet
                 existing configuration files.  This feature is thus destructive
                 and should be used with the utmost care.",
             :methods => [:purge]
+        feature :holdable, "The provider can hold packages. This generally means
+                that the package will not be automatically upgraded. Note that
+                a held status is considered a superset of installed",
+            :methods => [:hold]
         feature :versionable, "The provider is capable of interrogating the
                 package database for installed version(s), and can select
                 which out of a set of available versions of a package to
@@ -58,6 +62,10 @@ module Puppet
 
             newvalue(:purged, :event => :package_purged, :required_features => :purgeable) do
                 provider.purge
+            end
+
+            newvalue(:held, :event => :package_held, :required_features => :holdable) do
+                provider.hold
             end
 
             # Alias the 'present' value.
@@ -111,7 +119,7 @@ module Puppet
                 @should.each { |should|
                     case should
                     when :present
-                        return true unless [:absent, :purged].include?(is)
+                        return true unless [:absent, :purged, :held].include?(is)
                     when :latest
                         # Short-circuit packages that are not present
                         return false if is == :absent or is == :purged
