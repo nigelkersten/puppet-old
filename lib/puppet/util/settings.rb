@@ -3,7 +3,7 @@ require 'sync'
 require 'puppet/transportable'
 require 'getoptlong'
 
-require 'puppet/external/event-loop'
+require 'puppet/external/event-loop/timer'
 require 'puppet/util/cacher'
 require 'puppet/util/loadedfile'
 
@@ -556,7 +556,8 @@ class Puppet::Util::Settings
     # Create a timer to check whether the file should be reparsed.
     def set_filetimeout_timer
         return unless timeout = self[:filetimeout] and timeout = Integer(timeout) and timeout > 0
-        timer = EventLoop::Timer.new(:interval => timeout, :tolerance => 1, :start? => true) { self.reparse() }
+        # timer = EventLoop::Timer.new(:interval => timeout, :tolerance => 1, :start? => true) { self.reparse() }
+        timer = EventLoop.every(timeout, :tolerance => 1) { self.reparse() }
     end
 
     # Convert the settings we manage into a catalog full of resources that model those settings.

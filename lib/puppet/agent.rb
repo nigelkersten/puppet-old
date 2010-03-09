@@ -1,5 +1,5 @@
 require 'sync'
-require 'puppet/external/event-loop'
+require 'puppet/external/event-loop/timer'
 
 # A general class for triggering a run of another
 # class.
@@ -102,7 +102,10 @@ class Puppet::Agent
     # timer events here.
     def start
         # Create our timer.  Puppet will handle observing it and such.
-        timer = EventLoop::Timer.new(:interval => Puppet[:runinterval], :tolerance => 1, :start? => true) do
+        # timer = EventLoop::Timer.new(:interval => Puppet[:runinterval], :tolerance => 1, :start? => true) do
+        #     run()
+        # end
+        timer = EventLoop.every(Puppet[:runinterval], :tolerance => 1) do
             run()
         end
 

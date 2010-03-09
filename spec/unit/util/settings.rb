@@ -955,31 +955,31 @@ describe Puppet::Util::Settings do
 
         it "should do nothing if no filetimeout setting is available" do
             @settings.expects(:value).with(:filetimeout).returns nil
-            EventLoop::Timer.expects(:new).never
+            EventLoop.expects(:every).never
             @settings.set_filetimeout_timer
         end
 
         it "should always convert the timer interval to an integer" do
             @settings.expects(:value).with(:filetimeout).returns "10"
-            EventLoop::Timer.expects(:new).with(:interval => 10, :start? => true, :tolerance => 1)
+            EventLoop.expects(:every).with(10, {:tolerance => 1})
             @settings.set_filetimeout_timer
         end
 
         it "should do nothing if the filetimeout setting is not greater than 0" do
             @settings.expects(:value).with(:filetimeout).returns -2
-            EventLoop::Timer.expects(:new).never
+            EventLoop.expects(:every).never
             @settings.set_filetimeout_timer
         end
 
-        it "should create a timer with its interval set to the filetimeout, start? set to true, and a tolerance of 1" do
+        it "should create a timer with its interval set to the filetimeout and a tolerance of 1" do
             @settings.expects(:value).with(:filetimeout).returns 5
-            EventLoop::Timer.expects(:new).with(:interval => 5, :start? => true, :tolerance => 1)
+            EventLoop.expects(:every).with(5, {:tolerance => 1})
 
             @settings.set_filetimeout_timer
         end
 
         it "should reparse when the timer goes off" do
-            EventLoop::Timer.expects(:new).with(:interval => 5, :start? => true, :tolerance => 1).yields
+            EventLoop.expects(:every).with(5,{:tolerance => 1}).yields
 
             @settings.expects(:reparse)
 
