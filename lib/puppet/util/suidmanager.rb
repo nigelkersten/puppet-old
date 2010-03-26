@@ -9,12 +9,25 @@ module Puppet::Util::SUIDManager
     to_delegate_to_process = [ :euid=, :euid, :egid=, :egid,
                                :uid=, :uid, :gid=, :gid, :groups=, :groups ]
 
+    if Facter.value('kernel') == 'Darwin'
+        Facter.loadfacts
+        osx_maj_ver = Facter.value('macosx_productversion_major')
+        raise Puppet::Error, "OS X requires Facter >= 1.5.5" if osx_maj_ver.nil?
+        # Process.groups= broken on 10.6 http://openradar.appspot.com/7791698
+        if osx_maj_ver == '10.6'
+            to_delegate_to_process.delete(:groups=)
+            def self.groups=(grouplist)
+                return true
+            end
+        end
+    end
+
     to_delegate_to_process.each do |method|
         def_delegator Process, method
         module_function method
     end
 
-    if Facter['kernel'].value == 'Darwin'
+    if Facter.value('kernel') == 'Darwin' and osx_maj_ver == '10.4'
         # Cannot change real UID on Darwin so we set euid
         alias :uid :euid
         alias :gid :egid
