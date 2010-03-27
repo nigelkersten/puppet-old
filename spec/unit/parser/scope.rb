@@ -10,6 +10,41 @@ describe Puppet::Parser::Scope do
         @scope = Puppet::Parser::Scope.new()
         @scope.parent = @topscope
     end
+ 
+    it "should be able to store references to class scopes" do
+        lambda { @scope.class_set "myname", "myscope" }.should_not raise_error
+    end
+
+    it "should be able to retrieve class scopes by name" do
+        @scope.class_set "myname", "myscope"
+        @scope.class_scope("myname").should == "myscope"
+    end
+
+    it "should be able to retrieve class scopes by object" do
+        klass = mock 'ast_class'
+        klass.expects(:name).returns("myname")
+        @scope.class_set "myname", "myscope"
+        @scope.class_scope(klass).should == "myscope"
+    end
+
+    # #620 - Nodes and classes should conflict, else classes don't get evaluated
+    describe "when evaluating nodes and classes with the same name (#620)" do
+
+        before do
+            @node = stub :nodescope? => true
+            @class = stub :nodescope? => false
+        end
+
+        it "should fail if a node already exists with the same name as the class being evaluated" do
+            @scope.class_set("one", @node)
+            lambda { @scope.class_set("one", @class) }.should raise_error(Puppet::ParseError)
+        end
+
+        it "should fail if a class already exists with the same name as the node being evaluated" do
+            @scope.class_set("one", @class)
+            lambda { @scope.class_set("one", @node) }.should raise_error(Puppet::ParseError)
+        end
+    end
 
     describe "when looking up a variable" do
         it "should default to an empty string" do
@@ -29,6 +64,11 @@ describe Puppet::Parser::Scope do
             @scope.lookupvar("var").should == "yep"
         end
 
+        it "should be able to look up hashes" do
+            @scope.setvar("var", {"a" => "b"})
+            @scope.lookupvar("var").should == {"a" => "b"}
+        end
+
         it "should be able to look up variables in parent scopes" do
             @topscope.setvar("var", "parentval")
             @scope.lookupvar("var").should == "parentval"
@@ -43,7 +83,7 @@ describe Puppet::Parser::Scope do
         describe "and the variable is qualified" do
             before do
                 @parser = Puppet::Parser::Parser.new()
-                @compiler = Puppet::Parser::Compiler.new(stub("node", :name => "foonode"), @parser)
+                @compiler = Puppet::Parser::Compiler.new(stub("node", :name => "foonode", :classes => []), @parser)
                 @scope.compiler = @compiler
                 @scope.parser = @parser
             end
@@ -52,7 +92,7 @@ describe Puppet::Parser::Scope do
                 klass = @parser.newclass(name)
                 Puppet::Parser::Resource.new(:type => "class", :title => name, :scope => @scope, :source => mock('source')).evaluate
 
-                return @compiler.class_scope(klass)
+                return @scope.class_scope(klass)
             end
 
             it "should be able to look up explicitly fully qualified variables from main" do
@@ -115,23 +155,33 @@ describe Puppet::Parser::Scope do
             lambda { @scope.setvar("var","1", :append => true) }.should raise_error(Puppet::ParseError)
         end
 
-        it "it should lookup current variable value" do
+        it "should lookup current variable value" do
             @scope.expects(:lookupvar).with("var").returns("2")
             @scope.setvar("var","1", :append => true)
         end
 
-        it "it should store the concatenated string '42'" do
+        it "should store the concatenated string '42'" do
             @topscope.setvar("var","4", :append => false)
             @scope.setvar("var","2", :append => true)
             @scope.lookupvar("var").should == "42"
         end
 
-        it "it should store the concatenated array [4,2]" do
+        it "should store the concatenated array [4,2]" do
             @topscope.setvar("var",[4], :append => false)
             @scope.setvar("var",[2], :append => true)
             @scope.lookupvar("var").should == [4,2]
         end
 
+        it "should store the merged hash {a => b, c => d}" do
+            @topscope.setvar("var",{"a" => "b"}, :append => false)
+            @scope.setvar("var",{"c" => "d"}, :append => true)
+            @scope.lookupvar("var").should == {"a" => "b", "c" => "d"}
+        end
+
+        it "should raise an error when appending a hash with something other than another hash" do
+            @topscope.setvar("var",{"a" => "b"}, :append => false)
+            lambda { @scope.setvar("var","not a hash", :append => true) }.should raise_error
+        end
     end
 
     describe "when calling number?" do

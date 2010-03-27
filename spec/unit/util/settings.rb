@@ -579,6 +579,25 @@ describe Puppet::Util::Settings do
             # and we should now have the new value in memory
             @settings[:two].should == "disk-replace"
         end
+
+        it "should retain in-memory values if the file has a syntax error" do
+            # Init the value
+            text = "[main]\none = initial-value\n"
+            @settings.expects(:read_file).returns(text)
+            @settings.parse
+            @settings[:one].should == "initial-value"
+
+            # Now replace the value with something bogus
+            text = "[main]\nkenny = killed-by-what-follows\n1 is 2, blah blah florp\n"
+            @settings.expects(:read_file).returns(text)
+            @settings.parse
+
+            # The originally-overridden value should not be replaced with the default
+            @settings[:one].should == "initial-value"
+
+            # and we should not have the new value in memory
+            @settings[:kenny].should be_nil
+        end
     end
 
     it "should provide a method for creating a catalog of resources from its configuration" do
@@ -718,6 +737,7 @@ describe Puppet::Util::Settings do
         before do
             @settings = Puppet::Util::Settings.new
             @settings.stubs(:service_user_available?).returns true
+            @settings.setdefaults :main, :noop => [false, ""]
             @settings.setdefaults :main, :maindir => ["/maindir", "a"], :seconddir => ["/seconddir", "a"]
             @settings.setdefaults :main, :user => ["suser", "doc"], :group => ["sgroup", "doc"]
             @settings.setdefaults :other, :otherdir => {:default => "/otherdir", :desc => "a", :owner => "service", :group => "service", :mode => 0755}
@@ -998,5 +1018,28 @@ describe Puppet::Util::Settings do
         end
 
         it "should cache the result"
+    end
+
+    describe "#without_noop" do
+        before do
+            @settings = Puppet::Util::Settings.new
+            @settings.setdefaults :main, :noop => [true, ""]
+        end
+
+        it "should set noop to false for the duration of the block" do
+            @settings.without_noop { @settings.value(:noop, :cli).should be_false }
+        end
+
+        it "should ensure that noop is returned to its previous value" do
+            @settings.without_noop { raise } rescue nil
+            @settings.value(:noop, :cli).should be_true
+        end
+
+        it "should work even if no 'noop' setting is available" do
+            settings = Puppet::Util::Settings.new
+            stuff = nil
+            settings.without_noop { stuff = "yay" }
+            stuff.should == "yay"
+        end
     end
 end

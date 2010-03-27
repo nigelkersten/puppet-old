@@ -21,6 +21,7 @@ describe Puppet::Parser::AST::Leaf do
         end
 
         it "should match values by equality" do
+            @value.stubs(:==).returns(false)
             @leaf.stubs(:safeevaluate).with(@scope).returns(@value)
             @value.expects(:==).with("value")
 
@@ -32,6 +33,12 @@ describe Puppet::Parser::AST::Leaf do
             @value.expects(:downcase).returns("value")
 
             @leaf.evaluate_match("value", @scope, :insensitive => true)
+        end
+
+        it "should match undef if value is an empty string" do
+            @leaf.stubs(:safeevaluate).with(@scope).returns("")
+
+            @leaf.evaluate_match(:undef, @scope).should be_true
         end
     end
 
@@ -68,6 +75,125 @@ describe Puppet::Parser::AST::String do
         it "should transform its value to a quoted string" do
             value = stub 'value', :is_a? => true, :to_s => "ab"
             Puppet::Parser::AST::String.new( :value => value ).to_s.should == "\"ab\""
+        end
+    end
+end
+
+describe Puppet::Parser::AST::Undef do
+    before :each do
+        @scope = stub 'scope'
+        @undef = Puppet::Parser::AST::Undef.new(:value => :undef)
+    end
+
+    it "should match undef with undef" do
+        @undef.evaluate_match(:undef, @scope).should be_true
+    end
+
+    it "should not match undef with an empty string" do
+        @undef.evaluate_match("", @scope).should be_false
+    end
+end
+
+describe Puppet::Parser::AST::HashOrArrayAccess do
+    before :each do
+        @scope = stub 'scope'
+    end
+
+    describe "when evaluating" do
+        it "should evaluate the variable part if necessary" do
+            @scope.stubs(:lookupvar).with("a").returns(["b"])
+
+            variable = stub 'variable', :evaluate => "a"
+            access = Puppet::Parser::AST::HashOrArrayAccess.new(:variable => variable, :key => 0 )
+
+            variable.expects(:safeevaluate).with(@scope).returns("a")
+
+            access.evaluate(@scope).should == "b"
+        end
+
+        it "should evaluate the access key part if necessary" do
+            @scope.stubs(:lookupvar).with("a").returns(["b"])
+
+            index = stub 'index', :evaluate => 0
+            access = Puppet::Parser::AST::HashOrArrayAccess.new(:variable => "a", :key => index )
+
+            index.expects(:safeevaluate).with(@scope).returns(0)
+
+            access.evaluate(@scope).should == "b"
+        end
+
+        it "should be able to return an array member" do
+            @scope.stubs(:lookupvar).with("a").returns(["val1", "val2", "val3"])
+
+            access = Puppet::Parser::AST::HashOrArrayAccess.new(:variable => "a", :key => 1 )
+
+            access.evaluate(@scope).should == "val2"
+        end
+
+        it "should be able to return an hash value" do
+            @scope.stubs(:lookupvar).with("a").returns({ "key1" => "val1", "key2" => "val2", "key3" => "val3" })
+
+            access = Puppet::Parser::AST::HashOrArrayAccess.new(:variable => "a", :key => "key2" )
+
+            access.evaluate(@scope).should == "val2"
+        end
+
+        it "should raise an error if the variable lookup didn't return an hash or an array" do
+            @scope.stubs(:lookupvar).with("a").returns("I'm a string")
+
+            access = Puppet::Parser::AST::HashOrArrayAccess.new(:variable => "a", :key => "key2" )
+
+            lambda { access.evaluate(@scope) }.should raise_error
+        end
+
+        it "should raise an error if the variable wasn't in the scope" do
+            @scope.stubs(:lookupvar).with("a").returns(nil)
+
+            access = Puppet::Parser::AST::HashOrArrayAccess.new(:variable => "a", :key => "key2" )
+
+            lambda { access.evaluate(@scope) }.should raise_error
+        end
+
+        it "should return a correct string representation" do
+            access = Puppet::Parser::AST::HashOrArrayAccess.new(:variable => "a", :key => "key2" )
+            access.to_s.should == '$a[key2]'
+        end
+
+        it "should work with recursive hash access" do
+            @scope.stubs(:lookupvar).with("a").returns({ "key" => { "subkey" => "b" }})
+
+            access1 = Puppet::Parser::AST::HashOrArrayAccess.new(:variable => "a", :key => "key")
+            access2 = Puppet::Parser::AST::HashOrArrayAccess.new(:variable => access1, :key => "subkey")
+
+            access2.evaluate(@scope).should == 'b'
+        end
+
+        it "should work with interleaved array and hash access" do
+            @scope.stubs(:lookupvar).with("a").returns({ "key" => [ "a" , "b" ]})
+
+            access1 = Puppet::Parser::AST::HashOrArrayAccess.new(:variable => "a", :key => "key")
+            access2 = Puppet::Parser::AST::HashOrArrayAccess.new(:variable => access1, :key => 1)
+
+            access2.evaluate(@scope).should == 'b'
+        end
+    end
+
+    describe "when assigning" do
+        it "should add a new key and value" do
+            scope = Puppet::Parser::Scope.new
+            scope.setvar("a", { 'a' => 'b' })
+
+            access = Puppet::Parser::AST::HashOrArrayAccess.new(:variable => "a", :key => "b")
+            access.assign(scope, "c" )
+
+            scope.lookupvar("a").should be_include("b")
+        end
+
+        it "should raise an error when trying to overwrite an hash value" do
+            @scope.stubs(:lookupvar).with("a").returns({ "key" => [ "a" , "b" ]})
+            access = Puppet::Parser::AST::HashOrArrayAccess.new(:variable => "a", :key => "key")
+
+            lambda { access.assign(@scope, "test") }.should raise_error
         end
     end
 end
@@ -149,6 +275,30 @@ describe Puppet::Parser::AST::Regex do
     end
 end
 
+describe Puppet::Parser::AST::Variable do
+    before :each do
+        @scope = stub 'scope'
+        @var = Puppet::Parser::AST::Variable.new(:value => "myvar")
+    end
+
+    it "should lookup the variable in scope" do
+        @scope.expects(:lookupvar).with("myvar", false).returns(:myvalue)
+        @var.safeevaluate(@scope).should == :myvalue
+    end
+
+    it "should return undef if the variable wasn't set" do
+        @scope.expects(:lookupvar).with("myvar", false).returns(:undefined)
+        @var.safeevaluate(@scope).should == :undef
+    end
+
+    describe "when converting to string" do
+        it "should transform its value to a variable" do
+            value = stub 'value', :is_a? => true, :to_s => "myvar"
+            Puppet::Parser::AST::Variable.new( :value => value ).to_s.should == "\$myvar"
+        end
+    end
+end
+
 describe Puppet::Parser::AST::HostName do
     before :each do
         @scope = stub 'scope'
@@ -186,40 +336,6 @@ describe Puppet::Parser::AST::HostName do
         @host.evaluate(@scope).should == @value
     end
 
-    it "should implement to_classname" do
-        @host.should respond_to(:to_classname)
-    end
-
-    it "should return the downcased nodename as classname" do
-        host = Puppet::Parser::AST::HostName.new( :value => "KLASSNAME" )
-        host.to_classname.should == "klassname"
-    end
-
-    it "should preserve '_' in to_classname with a string nodename" do
-        host = Puppet::Parser::AST::HostName.new( :value => "node_with_underscore")
-        host.to_classname.should == "node_with_underscore"
-    end
-
-    it "should preserve '_' in to_classname with a regex nodename" do
-        host = Puppet::Parser::AST::HostName.new( :value => Puppet::Parser::AST::Regex.new(:value => "/\dnode_with_underscore\.+/") )
-        host.to_classname.should == "dnode_with_underscore."
-    end
-
-    it "should return a string usable as classname when calling to_classname" do
-        host = Puppet::Parser::AST::HostName.new( :value => Puppet::Parser::AST::Regex.new(:value => "/^this-is not@a classname$/") )
-        host.to_classname.should == "this-isnotaclassname"
-    end
-
-    it "should return a string usable as a tag when calling to_classname" do
-        host = Puppet::Parser::AST::HostName.new( :value => Puppet::Parser::AST::Regex.new(:value => "/.+.reductivelabs\.com/") )
-        host.to_classname.should == "reductivelabs.com"
-    end
-
-    it "should delegate 'match' to the underlying value if it is an HostName" do
-        @value.expects(:match).with("value")
-        @host.match("value")
-    end
-
     it "should delegate eql? to the underlying value if it is an HostName" do
         @value.expects(:eql?).with("value")
         @host.eql?("value")
@@ -234,43 +350,5 @@ describe Puppet::Parser::AST::HostName do
     it "should delegate hash to the underlying value" do
         @value.expects(:hash)
         @host.hash
-    end
-
-    it "should return true when regex? is called and value is a Regex" do
-        @value.expects(:is_a?).with(Puppet::Parser::AST::Regex).returns(true)
-        @host.regex?.should be_true
-    end
-
-    it "should return the results of comparing the regexes if asked whether a regex matches another regex" do
-        hosts = [1,2].collect do |num|
-            vreg = /vreg#{num}/
-            value = Puppet::Parser::AST::Regex.new(:value => vreg)
-            Puppet::Parser::AST::HostName.new(:value => value)
-        end
-
-        hosts[0].match(hosts[1]).should be_false
-        hosts[0].match(hosts[0]).should be_true
-    end
-
-    it "should return false when comparing a non-regex to a regex" do
-        vreg = /vreg/
-        value = Puppet::Parser::AST::Regex.new(:value => vreg)
-        regex = Puppet::Parser::AST::HostName.new(:value => value)
-
-        value = Puppet::Parser::AST::Regex.new(:value => "foo")
-        normal = Puppet::Parser::AST::HostName.new(:value => value)
-
-        normal.match(regex).should be_false
-    end
-
-    it "should true when a provided string matches a regex" do
-        vreg = /r/
-        value = Puppet::Parser::AST::Regex.new(:value => vreg)
-        regex = Puppet::Parser::AST::HostName.new(:value => value)
-
-        value = Puppet::Parser::AST::Leaf.new(:value => "bar")
-        normal = Puppet::Parser::AST::HostName.new(:value => value)
-
-        regex.match(normal).should be_true
     end
 end

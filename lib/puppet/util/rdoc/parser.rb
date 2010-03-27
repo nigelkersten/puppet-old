@@ -148,6 +148,7 @@ class Parser
     # create documentation for include statements we can find in +code+
     # and associate it with +container+
     def scan_for_include_or_require(container, code)
+        code = [code] unless code.is_a?(Array)
         code.each do |stmt|
             scan_for_include_or_require(container,stmt.children) if stmt.is_a?(Puppet::Parser::AST::ASTArray)
 
@@ -160,9 +161,26 @@ class Parser
         end
     end
 
+    # create documentation for realize statements we can find in +code+
+    # and associate it with +container+
+    def scan_for_realize(container, code)
+        code = [code] unless code.is_a?(Array)
+        code.each do |stmt|
+            scan_for_realize(container,stmt.children) if stmt.is_a?(Puppet::Parser::AST::ASTArray)
+
+            if stmt.is_a?(Puppet::Parser::AST::Function) and stmt.name == 'realize'
+                stmt.arguments.each do |realized|
+                    Puppet.debug "found #{stmt.name}: #{realized}"
+                    container.add_realize(Include.new(realized.to_s, stmt.doc))
+                end
+            end
+        end
+    end
+
     # create documentation for global variables assignements we can find in +code+
     # and associate it with +container+
     def scan_for_vardef(container, code)
+        code = [code] unless code.is_a?(Array)
         code.each do |stmt|
             scan_for_vardef(container,stmt.children) if stmt.is_a?(Puppet::Parser::AST::ASTArray)
 
@@ -176,26 +194,41 @@ class Parser
     # create documentation for resources we can find in +code+
     # and associate it with +container+
     def scan_for_resource(container, code)
+        code = [code] unless code.is_a?(Array)
         code.each do |stmt|
             scan_for_resource(container,stmt.children) if stmt.is_a?(Puppet::Parser::AST::ASTArray)
 
             if stmt.is_a?(Puppet::Parser::AST::Resource) and !stmt.type.nil?
-                type = stmt.type.split("::").collect { |s| s.capitalize }.join("::")
-                title = stmt.title.is_a?(Puppet::Parser::AST::ASTArray) ? stmt.title.to_s.gsub(/\[(.*)\]/,'\1') : stmt.title.to_s
-                Puppet.debug "rdoc: found resource: %s[%s]" % [type,title]
+                begin
+                    type = stmt.type.split("::").collect { |s| s.capitalize }.join("::")
+                    title = stmt.title.is_a?(Puppet::Parser::AST::ASTArray) ? stmt.title.to_s.gsub(/\[(.*)\]/,'\1') : stmt.title.to_s
+                    Puppet.debug "rdoc: found resource: %s[%s]" % [type,title]
 
-                param = []
-                stmt.params.children.each do |p|
-                    res = {}
-                    res["name"] = p.param
-                    res["value"] = "#{p.value.to_s}" unless p.value.nil?
+                    param = []
+                    stmt.params.children.each do |p|
+                        res = {}
+                        res["name"] = p.param
+                        res["value"] = "#{p.value.to_s}" unless p.value.nil?
 
-                    param << res
+                        param << res
+                    end
+
+                    container.add_resource(PuppetResource.new(type, title, stmt.doc, param))
+                rescue => detail
+                    raise Puppet::ParseError, "impossible to parse resource in #{stmt.file} at line #{stmt.line}: #{detail}"
                 end
-
-                container.add_resource(PuppetResource.new(type, title, stmt.doc, param))
             end
         end
+    end
+
+    def resource_stmt_to_ref(stmt)
+        type = stmt.type.split("::").collect { |s| s.capitalize }.join("::")
+        title = stmt.title.is_a?(Puppet::Parser::AST::ASTArray) ? stmt.title.to_s.gsub(/\[(.*)\]/,'\1') : stmt.title.to_s
+
+        param = stmt.params.children.collect do |p|
+            {"name" => p.param, "value" => p.value.to_s}
+        end
+        PuppetResource.new(type, title, stmt.doc, param)
     end
 
     # create documentation for a class named +name+
@@ -203,7 +236,7 @@ class Parser
         Puppet.debug "rdoc: found new class %s" % name
         container, name = get_class_or_module(container, name)
 
-        superclass = klass.parentclass
+        superclass = klass.parent
         superclass = "" if superclass.nil? or superclass.empty?
 
         @stats.num_classes += 1
@@ -221,16 +254,19 @@ class Parser
         code ||= klass.code
         unless code.nil?
             scan_for_include_or_require(cls, code)
+            scan_for_realize(cls, code)
             scan_for_resource(cls, code) if Puppet.settings[:document_all]
         end
 
         cls.comment = comment
+    rescue => detail
+        raise Puppet::ParseError, "impossible to parse class '#{name}' in #{klass.file} at line #{klass.line}: #{detail}"
     end
 
     # create documentation for a node
     def document_node(name, node, container)
         Puppet.debug "rdoc: found new node %s" % name
-        superclass = node.parentclass
+        superclass = node.parent
         superclass = "" if superclass.nil? or superclass.empty?
 
         comment = node.doc
@@ -242,11 +278,14 @@ class Parser
         code ||= node.code
         unless code.nil?
             scan_for_include_or_require(n, code)
+            scan_for_realize(n, code)
             scan_for_vardef(n, code)
             scan_for_resource(n, code) if Puppet.settings[:document_all]
         end
 
         n.comment = comment
+    rescue => detail
+        raise Puppet::ParseError, "impossible to parse node '#{name}' in #{node.file} at line #{node.line}: #{detail}"
     end
 
     # create documentation for a define
@@ -255,7 +294,7 @@ class Parser
         # find superclas if any
         @stats.num_methods += 1
 
-        # find the parentclass
+        # find the parent
         # split define name by :: to find the complete module hierarchy
         container, name = get_class_or_module(container,name)
 
@@ -263,12 +302,15 @@ class Parser
         declaration = ""
         define.arguments.each do |arg,value|
             declaration << "\$#{arg}"
-            if !value.nil?
+            unless value.nil?
                 declaration << " => "
-                if !value.is_a?(Puppet::Parser::AST::ASTArray)
+                case value
+                when Puppet::Parser::AST::Leaf
                     declaration << "'#{value.value}'"
-                else
+                when Puppet::Parser::AST::ASTArray
                     declaration << "[%s]" % value.children.collect { |v| "'#{v}'" }.join(", ")
+                else
+                    declaration << "#{value.to_s}"
                 end
             end
             declaration << ", "
@@ -284,14 +326,16 @@ class Parser
         meth.visibility = :public
         meth.document_self = true
         meth.singleton = false
+    rescue => detail
+        raise Puppet::ParseError, "impossible to parse definition '#{name}' in #{define.file} at line #{define.line}: #{detail}"
     end
 
     # Traverse the AST tree and produce code-objects node
     # that contains the documentation
     def parse_elements(container)
         Puppet.debug "rdoc: scanning manifest"
-        @ast.hostclasses.values.sort { |a,b| a.classname <=> b.classname }.each do |klass|
-            name = klass.classname
+        @ast.hostclasses.values.sort { |a,b| a.name <=> b.name }.each do |klass|
+            name = klass.name
             if klass.file == @input_file_name
                 unless name.empty?
                     document_class(name,klass,container)

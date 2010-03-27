@@ -86,6 +86,10 @@ module Puppet
         :mkusers => [false,
             "Whether to create the necessary user and group that puppetd will
             run as."],
+        :manage_internal_file_permissions => [true,
+            "Whether Puppet should manage the owner, group, and mode of files 
+            it uses internally"
+            ],
         :path => {:default => "none",
             :desc => "The shell search path.  Defaults to whatever is inherited
                 from the parent process.",
@@ -155,9 +159,6 @@ module Puppet
             may need to use a FQDN for the server hostname when using a proxy."],
         :http_proxy_port => [3128,
             "The HTTP proxy port to use for outgoing connections"],
-        :http_enable_post_connection_check => [true,
-            "Boolean; wheter or not puppetd should validate the server
-            SSL certificate against the request hostname."],
         :filetimeout => [ 15,
             "The minimum time to wait (in seconds) between checking for updates in
             configuration files.  This timeout determines how quickly Puppet checks whether
@@ -192,7 +193,15 @@ module Puppet
         :config_version => ["", "How to determine the configuration version.  By default, it will be the
             time that the configuration is parsed, but you can provide a shell script to override how the
             version is determined.  The output of this script will be added to every log message in the
-            reports, allowing you to correlate changes on your hosts to the source version on the server."]
+            reports, allowing you to correlate changes on your hosts to the source version on the server."],
+        :zlib => [true, 
+            "Boolean; whether to use the zlib library",
+        ],
+        :prerun_command => ["", "A command to run before every agent run.  If this command returns a non-zero
+            return code, the entire Puppet run will fail."],
+        :postrun_command => ["", "A command to run after every agent run.  If this command returns a non-zero
+            return code, the entire Puppet run will be considered to have failed, even though it might have
+            performed work during the normal run."]
     )
 
     hostname = Facter["hostname"].value
@@ -284,6 +293,7 @@ module Puppet
     )
 
     setdefaults(:ca,
+        :ca_name => ["$certname", "The name to use the Certificate Authority certificate."],
         :cadir => {  :default => "$ssldir/ca",
             :owner => "service",
             :group => "service",
@@ -522,6 +532,18 @@ module Puppet
             authority requests.  It's a separate server because it cannot
             and does not need to horizontally scale."],
         :ca_port => ["$masterport", "The port to use for the certificate authority."],
+        :catalog_format => {
+            :default => "",
+            :desc => "(Deprecated for 'preferred_serialization_format') What format to
+                     use to dump the catalog.  Only supports 'marshal' and 'yaml'.  Only
+                     matters on the client, since it asks the server for a specific format.",
+            :hook => proc { |value|
+                if value
+                    Puppet.warning "Setting 'catalog_format' is deprecated; use 'preferred_serialization_format' instead."
+                    Puppet.settings[:preferred_serialization_format] = value
+                end
+            }
+        },
         :preferred_serialization_format => ["pson", "The preferred means of serializing
             ruby instances for passing over the wire.  This won't guarantee that all
             instances will be serialized using this method, since not all classes
@@ -654,6 +676,9 @@ module Puppet
             used when networked databases are used."],
         :dbsocket => [ "", "The database socket location. Only used when networked
             databases are used.  Will be ignored if the value is an empty string."],
+        :dbconnections => [ 0, "The number of database connections. Only used when
+            networked databases are used.  Will be ignored if the value is an empty
+            string or is less than 1."],
         :railslog => {:default => "$logdir/rails.log",
             :mode => 0600,
             :owner => "service",

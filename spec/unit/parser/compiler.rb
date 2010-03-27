@@ -40,26 +40,10 @@ describe Puppet::Parser::Compiler do
         @compiler = Puppet::Parser::Compiler.new(@node, @parser)
     end
 
-    it "should be able to store references to class scopes" do
-        lambda { @compiler.class_set "myname", "myscope" }.should_not raise_error
-    end
-
-    it "should be able to retrieve class scopes by name" do
-        @compiler.class_set "myname", "myscope"
-        @compiler.class_scope("myname").should == "myscope"
-    end
-
-    it "should be able to retrieve class scopes by object" do
-        klass = mock 'ast_class'
-        klass.expects(:classname).returns("myname")
-        @compiler.class_set "myname", "myscope"
-        @compiler.class_scope(klass).should == "myscope"
-    end
-
-    it "should be able to return a class list containing all set classes" do
-        @compiler.class_set "", "empty"
-        @compiler.class_set "one", "yep"
-        @compiler.class_set "two", "nope"
+    it "should be able to return a class list containing all added classes" do
+        @compiler.add_class ""
+        @compiler.add_class "one"
+        @compiler.add_class "two"
 
         @compiler.classlist.sort.should == %w{one two}.sort
     end
@@ -116,7 +100,14 @@ describe Puppet::Parser::Compiler do
             scope = mock 'scope'
             newscope = @compiler.newscope(scope)
 
-            @compiler.parent(newscope).should equal(scope)
+            newscope.parent.should equal(scope)
+        end
+
+        it "should set the parent scope of the new scope to its topscope if the parent passed in is nil" do
+            scope = mock 'scope'
+            newscope = @compiler.newscope(nil)
+
+            newscope.parent.should equal(@compiler.topscope)
         end
     end
 
@@ -153,8 +144,8 @@ describe Puppet::Parser::Compiler do
         it "should evaluate any existing classes named in the node" do
             classes = %w{one two three four}
             main = stub 'main'
-            one = stub 'one', :classname => "one"
-            three = stub 'three', :classname => "three"
+            one = stub 'one', :name => "one"
+            three = stub 'three', :name => "three"
             @node.stubs(:name).returns("whatever")
             @node.stubs(:classes).returns(classes)
 
@@ -396,7 +387,7 @@ describe Puppet::Parser::Compiler do
     describe "when evaluating found classes" do
 
         before do
-            @class = stub 'class', :classname => "my::class"
+            @class = stub 'class', :name => "my::class"
             @scope.stubs(:find_hostclass).with("myclass").returns(@class)
 
             @resource = stub 'resource', :ref => "Class[myclass]", :type => "file"
@@ -405,7 +396,8 @@ describe Puppet::Parser::Compiler do
         it "should evaluate each class" do
             @compiler.catalog.stubs(:tag)
 
-            @class.expects(:evaluate).with(@scope)
+            @class.expects(:mk_plain_resource).with(@scope)
+            @scope.stubs(:class_scope).with(@class)
 
             @compiler.evaluate_classes(%w{myclass}, @scope)
         end
@@ -415,7 +407,8 @@ describe Puppet::Parser::Compiler do
 
             @resource.expects(:evaluate).never
 
-            @class.expects(:evaluate).returns(@resource)
+            @class.expects(:mk_plain_resource).returns(@resource)
+            @scope.stubs(:class_scope).with(@class)
 
             @compiler.evaluate_classes(%w{myclass}, @scope)
         end
@@ -424,7 +417,8 @@ describe Puppet::Parser::Compiler do
             @compiler.catalog.stubs(:tag)
 
             @resource.expects(:evaluate)
-            @class.expects(:evaluate).returns(@resource)
+            @class.expects(:mk_plain_resource).returns(@resource)
+            @scope.stubs(:class_scope).with(@class)
 
             @compiler.evaluate_classes(%w{myclass}, @scope, false)
         end
@@ -432,7 +426,7 @@ describe Puppet::Parser::Compiler do
         it "should skip classes that have already been evaluated" do
             @compiler.catalog.stubs(:tag)
 
-            @compiler.expects(:class_scope).with(@class).returns("something")
+            @scope.stubs(:class_scope).with(@class).returns("something")
 
             @compiler.expects(:add_resource).never
 
@@ -445,7 +439,7 @@ describe Puppet::Parser::Compiler do
         it "should skip classes previously evaluated with different capitalization" do
             @compiler.catalog.stubs(:tag)
             @scope.stubs(:find_hostclass).with("MyClass").returns(@class)
-            @compiler.expects(:class_scope).with(@class).returns("something")
+            @scope.stubs(:class_scope).with(@class).returns("something")
             @compiler.expects(:add_resource).never
             @resource.expects(:evaluate).never
             Puppet::Parser::Resource.expects(:new).never
@@ -457,9 +451,10 @@ describe Puppet::Parser::Compiler do
 
             @compiler.stubs(:add_resource)
             @scope.stubs(:find_hostclass).with("notfound").returns(nil)
+            @scope.stubs(:class_scope).with(@class)
 
             Puppet::Parser::Resource.stubs(:new).returns(@resource)
-            @class.stubs :evaluate
+            @class.stubs :mk_plain_resource
             @compiler.evaluate_classes(%w{myclass notfound}, @scope).should == %w{myclass}
         end
     end
@@ -495,31 +490,31 @@ describe Puppet::Parser::Compiler do
         end
 
         it "should evaluate the first node class matching the node name" do
-            node_class = stub 'node', :classname => "c", :evaluate_code => nil
+            node_class = stub 'node', :name => "c", :evaluate_code => nil
             @compiler.parser.stubs(:node).with("c").returns(node_class)
 
             node_resource = stub 'node resource', :ref => "Node[c]", :evaluate => nil, :type => "node"
-            node_class.expects(:evaluate).returns(node_resource)
+            node_class.expects(:mk_plain_resource).returns(node_resource)
 
             @compiler.compile
         end
 
         it "should match the default node if no matching node can be found" do
-            node_class = stub 'node', :classname => "default", :evaluate_code => nil
+            node_class = stub 'node', :name => "default", :evaluate_code => nil
             @compiler.parser.stubs(:node).with("default").returns(node_class)
 
             node_resource = stub 'node resource', :ref => "Node[default]", :evaluate => nil, :type => "node"
-            node_class.expects(:evaluate).returns(node_resource)
+            node_class.expects(:mk_plain_resource).returns(node_resource)
 
             @compiler.compile
         end
 
         it "should evaluate the node resource immediately rather than using lazy evaluation" do
-            node_class = stub 'node', :classname => "c"
+            node_class = stub 'node', :name => "c"
             @compiler.parser.stubs(:node).with("c").returns(node_class)
 
             node_resource = stub 'node resource', :ref => "Node[c]", :type => "node"
-            node_class.expects(:evaluate).returns(node_resource)
+            node_class.expects(:mk_plain_resource).returns(node_resource)
 
             node_resource.expects(:evaluate)
 
@@ -528,13 +523,13 @@ describe Puppet::Parser::Compiler do
 
         it "should set the node's scope as the top scope" do
             node_resource = stub 'node resource', :ref => "Node[c]", :evaluate => nil, :type => "node"
-            node_class = stub 'node', :classname => "c", :evaluate => node_resource
+            node_class = stub 'node', :name => "c", :mk_plain_resource => node_resource
 
             @compiler.parser.stubs(:node).with("c").returns(node_class)
 
             # The #evaluate method normally does this.
             scope = stub 'scope', :source => "mysource"
-            @compiler.class_set(node_class.classname, scope)
+            @compiler.topscope.expects(:class_scope).with(node_class).returns(scope)
             node_resource.stubs(:evaluate)
 
             @compiler.compile
@@ -580,25 +575,6 @@ describe Puppet::Parser::Compiler do
             @compiler.add_override(@override)
 
             lambda { @compiler.compile }.should raise_error(Puppet::ParseError)
-        end
-    end
-
-    # #620 - Nodes and classes should conflict, else classes don't get evaluated
-    describe "when evaluating nodes and classes with the same name (#620)" do
-
-        before do
-            @node = stub :nodescope? => true
-            @class = stub :nodescope? => false
-        end
-
-        it "should fail if a node already exists with the same name as the class being evaluated" do
-            @compiler.class_set("one", @node)
-            lambda { @compiler.class_set("one", @class) }.should raise_error(Puppet::ParseError)
-        end
-
-        it "should fail if a class already exists with the same name as the node being evaluated" do
-            @compiler.class_set("one", @class)
-            lambda { @compiler.class_set("one", @node) }.should raise_error(Puppet::ParseError)
         end
     end
 end

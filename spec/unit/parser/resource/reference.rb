@@ -40,10 +40,22 @@ describe Puppet::Parser::Resource::Reference do
         ref.to_s.should == "File[/tmp/yay]"
     end
 
-    it "should canonize resource references" do
+    it "should canonize resource reference types" do
         ref = @type.new(:type => "foo::bar", :title => "/tmp/yay")
         ref.to_s.should == "Foo::Bar[/tmp/yay]"
     end
+
+    it "should canonize resource reference values" do
+        ref = @type.new(:type => "file", :title => "/tmp/yay/")
+        ref.to_s.should == "File[/tmp/yay]"
+    end
+
+    it "should canonize resource reference values without order dependencies" do
+        args = [[:title, "/tmp/yay/"], [:type, "file"]]
+        ref = @type.new(args)
+        ref.to_s.should == "File[/tmp/yay]"
+    end
+
 end
 
 describe Puppet::Parser::Resource::Reference, " when modeling defined types" do
@@ -84,7 +96,7 @@ describe Puppet::Parser::Resource::Reference, " when modeling defined types" do
         scope = @compiler.topscope.class.new(:parent => @compiler.topscope, :namespace => "other", :parser => @parser)
 
         ref = @type.new(:type => "class", :title => "top", :scope => scope)
-        ref.definedtype.classname.should equal(top.classname)
+        ref.definedtype.name.should equal(top.name)
     end
 
     it "should only look for fully qualified definitions" do
@@ -94,6 +106,6 @@ describe Puppet::Parser::Resource::Reference, " when modeling defined types" do
         scope = @compiler.topscope.class.new(:parent => @compiler.topscope, :namespace => "other", :parser => @parser)
 
         ref = @type.new(:type => "top", :title => "foo", :scope => scope)
-        ref.definedtype.classname.should equal(top.classname)
+        ref.definedtype.name.should equal(top.name)
     end
 end

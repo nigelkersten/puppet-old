@@ -32,14 +32,14 @@ Puppet::Type.type(:package).provide :dpkg, :parent => Puppet::Provider::Package 
         return packages
     end
 
-    REGEX = %r{^(\S+) +(\S+) +(\S+) (\S+) (\S*)$}
-    FIELDS = [:desired, :error, :status, :name, :ensure]
+    self::REGEX = %r{^(\S+) +(\S+) +(\S+) (\S+) (\S*)$}
+    self::FIELDS = [:desired, :error, :status, :name, :ensure]
 
     def self.parse_line(line)
-        if match = REGEX.match(line)
+        if match = self::REGEX.match(line)
             hash = {}
 
-            FIELDS.zip(match.captures) { |field,value|
+            self::FIELDS.zip(match.captures) { |field,value|
                 hash[field] = value
             }
 
@@ -83,7 +83,7 @@ Puppet::Type.type(:package).provide :dpkg, :parent => Puppet::Provider::Package 
     def latest
         output = dpkg_deb "--show", @resource[:source]
         matches = /^(\S+)\t(\S+)$/.match(output).captures
-        unless matches[0].match(@resource[:name])
+        unless matches[0].match( Regexp.escape(@resource[:name]) )
             warning "source doesn't contain named package, but %s" % matches[0]
         end
         matches[1]

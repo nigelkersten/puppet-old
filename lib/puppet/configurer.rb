@@ -5,6 +5,8 @@ require 'puppet/network/http_pool'
 require 'puppet/util'
 
 class Puppet::Configurer
+    class CommandHookError < RuntimeError; end
+
     require 'puppet/configurer/fact_handler'
     require 'puppet/configurer/plugin_handler'
 
@@ -14,7 +16,6 @@ class Puppet::Configurer
     # For benchmarking
     include Puppet::Util
 
-    attr_accessor :catalog
     attr_reader :compile_time
 
     # Provide more helpful strings to the logging that the Agent does
@@ -37,6 +38,14 @@ class Puppet::Configurer
     def clear
         @catalog.clear(true) if @catalog
         @catalog = nil
+    end
+
+    def execute_postrun_command
+        execute_from_setting(:postrun_command)
+    end
+
+    def execute_prerun_command
+        execute_from_setting(:prerun_command)
     end
 
     # Initialize and load storage
@@ -68,6 +77,10 @@ class Puppet::Configurer
         @splayed = false
     end
 
+    def initialize_report
+        Puppet::Transaction::Report.new
+    end
+
     # Prepare for catalog retrieval.  Downloads everything necessary, etc.
     def prepare
         dostorage()
@@ -75,6 +88,8 @@ class Puppet::Configurer
         download_plugins()
 
         download_fact_plugins()
+
+        execute_prerun_command
     end
 
     # Get the remote catalog, yo.  Returns nil if no catalog can be found.
@@ -93,7 +108,9 @@ class Puppet::Configurer
             duration = thinmark do
                 result = catalog_class.find(name, fact_options.merge(:ignore_cache => true))
             end
-        rescue => detail
+        rescue SystemExit,NoMemoryError
+            raise
+        rescue Exception => detail
             puts detail.backtrace if Puppet[:trace]
             Puppet.err "Could not retrieve catalog from remote server: %s" % detail
         end
@@ -123,6 +140,7 @@ class Puppet::Configurer
     # Convert a plain resource catalog into our full host catalog.
     def convert_catalog(result, duration)
         catalog = result.to_ral
+        catalog.finalize
         catalog.retrieval_duration = duration
         catalog.host_config = true
         catalog.write_class_file
@@ -133,7 +151,17 @@ class Puppet::Configurer
     # This just passes any options on to the catalog,
     # which accepts :tags and :ignoreschedules.
     def run(options = {})
-        prepare()
+        begin
+            prepare()
+        rescue SystemExit,NoMemoryError
+            raise
+        rescue Exception => detail
+            puts detail.backtrace if Puppet[:trace]
+            Puppet.err "Failed to prepare catalog: %s" % detail
+        end
+
+        report = initialize_report()
+        Puppet::Util::Log.newdestination(report)
 
         if catalog = options[:catalog]
             options.delete(:catalog)
@@ -142,18 +170,36 @@ class Puppet::Configurer
             return
         end
 
+        transaction = nil
+
         begin
             benchmark(:notice, "Finished catalog run") do
-                catalog.apply(options)
+                transaction = catalog.apply(options)
             end
+            report
         rescue => detail
             puts detail.backtrace if Puppet[:trace]
             Puppet.err "Failed to apply catalog: %s" % detail
+            return
         end
-
+    ensure
         # Now close all of our existing http connections, since there's no
         # reason to leave them lying open.
         Puppet::Network::HttpPool.clear_http_instances
+        execute_postrun_command
+
+        Puppet::Util::Log.close(report)
+
+        send_report(report, transaction)
+    end
+
+    def send_report(report, trans = nil)
+        trans.add_metrics_to_report(report) if trans
+        puts report.summary if Puppet[:summarize]
+        report.save() if Puppet[:report]
+    rescue => detail
+        puts detail.backtrace if Puppet[:trace]
+        Puppet.err "Could not send report: #{detail}"
     end
 
     private
@@ -173,5 +219,15 @@ class Puppet::Configurer
         end
 
         return timeout
+    end
+
+    def execute_from_setting(setting)
+        return if (command = Puppet[setting]) == ""
+
+        begin
+            Puppet::Util.execute([command])
+        rescue => detail
+            raise CommandHookError, "Could not run command from #{setting}: #{detail}"
+        end
     end
 end

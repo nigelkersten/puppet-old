@@ -25,7 +25,7 @@ describe Puppet::Parser::Resource do
         params = args[:params] || {:one => "yay", :three => "rah"}
         if args[:params] == :none
             args.delete(:params)
-        else
+        elsif not args[:params].is_a? Array
             args[:params] = paramify(args[:source], params)
         end
 
@@ -98,6 +98,17 @@ describe Puppet::Parser::Resource do
             @arguments[:params] = [ param(:tag, tags , :source) ]
             res = Puppet::Parser::Resource.new(@arguments)
             (res.tags & tags).should == tags
+        end
+    end
+
+    describe "when refering to a resource with name canonicalization" do
+        before do
+            @arguments = {:type => "file", :title => "/path/", :scope => stub('scope', :source => mock('source'))}
+        end
+
+        it "should canonicalize its own name" do
+            res = Puppet::Parser::Resource.new(@arguments)
+            res.ref.should == "File[/path]"
         end
     end
 
@@ -482,6 +493,19 @@ describe Puppet::Parser::Resource do
             @parser_resource = mkresource :source => @source, :params => {:foo => "bar", :fee => ["a", [ref1,ref2]]}
             result = @parser_resource.to_resource
             result[:fee].should == ["a", Puppet::Resource::Reference.new(:file, "/my/file1"), Puppet::Resource::Reference.new(:file, "/my/file2")]
+        end
+
+        it "should fail if the same param is declared twice" do
+            lambda do 
+                @parser_resource = mkresource :source => @source, :params => [
+                    Puppet::Parser::Resource::Param.new(
+                        :name => :foo, :value => "bar", :source => @source
+                    ),
+                    Puppet::Parser::Resource::Param.new(
+                        :name => :foo, :value => "baz", :source => @source
+                    )
+                ]
+            end.should raise_error(Puppet::ParseError)
         end
     end
 end

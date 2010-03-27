@@ -90,55 +90,6 @@ describe Puppet::SSL::Host do
         Puppet::SSL::Host.localhost.should equal(two)
     end
 
-    it "should be able to verify its certificate matches its key" do
-        Puppet::SSL::Host.new("foo").should respond_to(:certificate_matches_key?)
-    end
-
-    it "should consider the certificate invalid if it cannot find a key" do
-        host = Puppet::SSL::Host.new("foo")
-        host.expects(:key).returns nil
-
-        host.should_not be_certificate_matches_key
-    end
-
-    it "should consider the certificate invalid if it cannot find a certificate" do
-        host = Puppet::SSL::Host.new("foo")
-        host.expects(:key).returns mock("key")
-        host.expects(:certificate).returns nil
-
-        host.should_not be_certificate_matches_key
-    end
-
-    it "should consider the certificate invalid if the SSL certificate's key verification fails" do
-        host = Puppet::SSL::Host.new("foo")
-
-        key = mock 'key', :content => "private_key"
-        sslcert = mock 'sslcert'
-        certificate = mock 'cert', :content => sslcert
-
-        host.stubs(:key).returns key
-        host.stubs(:certificate).returns certificate
-
-        sslcert.expects(:check_private_key).with("private_key").returns false
-
-        host.should_not be_certificate_matches_key
-    end
-
-    it "should consider the certificate valid if the SSL certificate's key verification succeeds" do
-        host = Puppet::SSL::Host.new("foo")
-
-        key = mock 'key', :content => "private_key"
-        sslcert = mock 'sslcert'
-        certificate = mock 'cert', :content => sslcert
-
-        host.stubs(:key).returns key
-        host.stubs(:certificate).returns certificate
-
-        sslcert.expects(:check_private_key).with("private_key").returns true
-
-        host.should be_certificate_matches_key
-    end
-
     describe "when specifying the CA location" do
         before do
             [Puppet::SSL::Key, Puppet::SSL::Certificate, Puppet::SSL::CertificateRequest, Puppet::SSL::CertificateRevocationList].each do |klass|
@@ -408,14 +359,15 @@ describe Puppet::SSL::Host do
     describe "when managing its certificate" do
         before do
             @realcert = mock 'certificate'
-            @cert = stub 'cert', :content => @realcert
+            @realcert.stubs(:check_private_key).with('private key').returns true
 
-            @host.stubs(:key).returns mock("key")
-            @host.stubs(:certificate_matches_key?).returns true
+            @cert = stub 'cert', :content => @realcert, :expired? => false
+
+            @host.stubs(:key).returns stub("key",:content => 'private key' )
         end
 
         it "should find the CA certificate if it does not have a certificate" do
-            Puppet::SSL::Certificate.expects(:find).with("ca").returns mock("cacert")
+            Puppet::SSL::Certificate.expects(:find).with(Puppet::SSL::CA_NAME).returns mock("cacert")
             Puppet::SSL::Certificate.stubs(:find).with("myname").returns @cert
 
             @host.certificate
@@ -424,13 +376,13 @@ describe Puppet::SSL::Host do
         it "should not find the CA certificate if it is the CA host" do
             @host.expects(:ca?).returns true
             Puppet::SSL::Certificate.stubs(:find)
-            Puppet::SSL::Certificate.expects(:find).with("ca").never
+            Puppet::SSL::Certificate.expects(:find).with(Puppet::SSL::CA_NAME).never
 
             @host.certificate
         end
 
         it "should return nil if it cannot find a CA certificate" do
-            Puppet::SSL::Certificate.expects(:find).with("ca").returns nil
+            Puppet::SSL::Certificate.expects(:find).with(Puppet::SSL::CA_NAME).returns nil
             Puppet::SSL::Certificate.expects(:find).with("myname").never
 
             @host.certificate.should be_nil
@@ -453,22 +405,32 @@ describe Puppet::SSL::Host do
         end
 
         it "should find the certificate in the Certificate class and return the Puppet certificate instance" do
-            Puppet::SSL::Certificate.expects(:find).with("ca").returns mock("cacert")
+            Puppet::SSL::Certificate.expects(:find).with(Puppet::SSL::CA_NAME).returns mock("cacert")
             Puppet::SSL::Certificate.expects(:find).with("myname").returns @cert
 
             @host.certificate.should equal(@cert)
         end
 
-        it "should fail if the found certificate does not match the private key" do
-            @host.expects(:certificate_matches_key?).returns false
+        it "should immediately expire the cached copy if the found certificate does not match the private key" do
+            @realcert.expects(:check_private_key).with('private key').returns false
 
             Puppet::SSL::Certificate.stubs(:find).returns @cert
+            Puppet::SSL::Certificate.expects(:expire).with("myname")
 
-            lambda { @host.certificate }.should raise_error(Puppet::Error)
+            @host.certificate
+        end
+
+        it "should not return a certificate if it does not match the private key" do
+            @realcert.expects(:check_private_key).with('private key').returns false
+
+            Puppet::SSL::Certificate.stubs(:find).returns @cert
+            Puppet::SSL::Certificate.stubs(:expire).with("myname")
+
+            @host.certificate.should == nil
         end
 
         it "should return any previously found certificate" do
-            Puppet::SSL::Certificate.expects(:find).with("ca").returns mock("cacert")
+            Puppet::SSL::Certificate.expects(:find).with(Puppet::SSL::CA_NAME).returns mock("cacert")
             Puppet::SSL::Certificate.expects(:find).with("myname").returns(@cert).once
 
             @host.certificate.should equal(@cert)
@@ -604,7 +566,9 @@ describe Puppet::SSL::Host do
             @store.stub_everything
             OpenSSL::X509::Store.stubs(:new).returns @store
 
-            Puppet.settings.stubs(:value).returns "ssl_host_testing"
+            Puppet.settings.stubs(:value).with(:localcacert).returns "ssl_host_testing"
+
+            Puppet::SSL::CertificateRevocationList.stubs(:find).returns(nil)
         end
 
         it "should accept a purpose" do
@@ -654,14 +618,14 @@ describe Puppet::SSL::Host do
 
         it "should catch and log errors during CSR saving" do
             @host.expects(:certificate).times(2).returns(nil).then.returns "foo"
-            @host.expects(:generate).times(2).raises(RuntimeError).then.returns nil
+            @host.expects(:generate).raises(RuntimeError).then.returns nil
             @host.stubs(:sleep)
             @host.wait_for_cert(1)
         end
 
         it "should sleep and retry after failures saving the CSR if waitforcert is enabled" do
             @host.expects(:certificate).times(2).returns(nil).then.returns "foo"
-            @host.expects(:generate).times(2).raises(RuntimeError).then.returns nil
+            @host.expects(:generate).raises(RuntimeError).then.returns nil
             @host.expects(:sleep).with(1)
             @host.wait_for_cert(1)
         end

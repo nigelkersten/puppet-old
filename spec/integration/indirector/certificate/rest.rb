@@ -19,7 +19,6 @@ describe "Certificate REST Terminus" do
         Puppet.settings[:vardir] = @dir
         Puppet.settings[:server] = "127.0.0.1"
         Puppet.settings[:masterport] = "34343"
-        Puppet.settings[:http_enable_post_connection_check] = false
 
         Puppet::Util::Cacher.expire
 
@@ -64,8 +63,6 @@ describe "Certificate REST Terminus" do
 
         # There's no good '==' method on certs.
         result.content.to_s.should == @host.certificate.content.to_s
-
-        # also make sure it uses the provided name, rather than the internal one.
         result.name.should == "bar"
     end
 end

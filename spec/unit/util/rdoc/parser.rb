@@ -137,9 +137,9 @@ describe RDoc::Parser do
 
     describe "when parsing AST elements" do
         before :each do
-            @klass = stub_everything 'klass', :file => "module/manifests/init.pp", :classname => "myclass"
-            @definition = stub_everything 'definition', :file => "module/manifests/init.pp"
-            @node = stub_everything 'node', :file => "module/manifests/init.pp"
+            @klass = stub_everything 'klass', :file => "module/manifests/init.pp", :name => "myclass", :type => :hostclass
+            @definition = stub_everything 'definition', :file => "module/manifests/init.pp", :type => :definition, :name => "mydef"
+            @node = stub_everything 'node', :file => "module/manifests/init.pp", :type => :node, :name => "mynode"
 
             @loadedcode = Puppet::Parser::LoadedCode.new
             @parser.ast = @loadedcode
@@ -148,7 +148,7 @@ describe RDoc::Parser do
         end
 
         it "should document classes in the parsed file" do
-            @loadedcode.add_hostclass("myclass", @klass)
+            @loadedcode.add_hostclass(@klass)
 
             @parser.expects(:document_class).with("myclass", @klass, @container)
 
@@ -157,7 +157,7 @@ describe RDoc::Parser do
 
         it "should not document class parsed in an other file" do
             @klass.stubs(:file).returns("/not/same/path/file.pp")
-            @loadedcode.add_hostclass("myclass", @klass)
+            @loadedcode.add_hostclass(@klass)
 
             @parser.expects(:document_class).with("myclass", @klass, @container).never
 
@@ -165,10 +165,11 @@ describe RDoc::Parser do
         end
 
         it "should document vardefs for the main class" do
-            @loadedcode.add_hostclass(:main, @klass)
+            @klass.stubs(:name).returns :main
+            @loadedcode.add_hostclass(@klass)
 
             code = stub 'code', :is_a? => false
-            @klass.stubs(:classname).returns("")
+            @klass.stubs(:name).returns("")
             @klass.stubs(:code).returns(code)
 
             @parser.expects(:scan_for_vardef).with(@container, code)
@@ -177,7 +178,7 @@ describe RDoc::Parser do
         end
 
         it "should document definitions in the parsed file" do
-            @loadedcode.add_definition("mydef", @definition)
+            @loadedcode.add_definition(@definition)
 
             @parser.expects(:document_define).with("mydef", @definition, @container)
 
@@ -186,7 +187,7 @@ describe RDoc::Parser do
 
         it "should not document definitions parsed in an other file" do
             @definition.stubs(:file).returns("/not/same/path/file.pp")
-            @loadedcode.add_definition("mydef", @definition)
+            @loadedcode.add_definition(@definition)
 
             @parser.expects(:document_define).with("mydef", @definition, @container).never
 
@@ -194,7 +195,7 @@ describe RDoc::Parser do
         end
 
         it "should document nodes in the parsed file" do
-            @loadedcode.add_node("mynode", @node)
+            @loadedcode.add_node(@node)
 
             @parser.expects(:document_node).with("mynode", @node, @container)
 
@@ -203,7 +204,7 @@ describe RDoc::Parser do
 
         it "should not document node parsed in an other file" do
             @node.stubs(:file).returns("/not/same/path/file.pp")
-            @loadedcode.add_node("mynode", @node)
+            @loadedcode.add_node(@node)
 
             @parser.expects(:document_node).with("mynode", @node, @container).never
 
@@ -213,7 +214,7 @@ describe RDoc::Parser do
 
     describe "when documenting definition" do
         before(:each) do
-            @define = stub_everything 'define', :arguments => [], :doc => "mydoc"
+            @define = stub_everything 'define', :arguments => [], :doc => "mydoc", :file => "file", :line => 42
             @class = stub_everything 'class'
             @parser.stubs(:get_class_or_module).returns([@class, "mydef"])
         end
@@ -228,12 +229,30 @@ describe RDoc::Parser do
 
             @parser.document_define("mydef", @define, @class)
         end
+
+        it "should produce a better error message on unhandled exception" do
+            @class.expects(:add_method).raises(ArgumentError)
+
+            lambda { @parser.document_define("mydef", @define, @class) }.should raise_error(Puppet::ParseError, /in file at line 42/)
+        end
+
+        it "should convert all definition parameter to string" do
+            arg = stub 'arg'
+            val = stub 'val'
+
+            @define.stubs(:arguments).returns({arg => val})
+
+            arg.expects(:to_s).returns("arg")
+            val.expects(:to_s).returns("val")
+
+            @parser.document_define("mydef", @define, @class)
+        end
     end
 
     describe "when documenting nodes" do
         before :each do
             @code = stub_everything 'code'
-            @node = stub_everything 'node', :doc => "mydoc", :parentclass => "parent", :code => @code
+            @node = stub_everything 'node', :doc => "mydoc", :parent => "parent", :code => @code, :file => "file", :line => 42
             @rdoc_node = stub_everything 'rdocnode'
 
             @class = stub_everything 'class'
@@ -265,12 +284,18 @@ describe RDoc::Parser do
             @parser.expects(:scan_for_resource).with(@rdoc_node, @code)
             @parser.document_node("mynode", @node, @class)
         end
+
+        it "should produce a better error message on unhandled exception" do
+            @class.stubs(:add_node).raises(ArgumentError)
+
+            lambda { @parser.document_node("mynode", @node, @class) }.should raise_error(Puppet::ParseError, /in file at line 42/)
+        end
     end
 
     describe "when documenting classes" do
         before :each do
             @code = stub_everything 'code'
-            @class = stub_everything 'class', :doc => "mydoc", :parentclass => "parent", :code => @code
+            @class = stub_everything 'class', :doc => "mydoc", :parent => "parent", :code => @code, :file => "file", :line => 42
             @rdoc_class = stub_everything 'rdoc-class'
 
             @module = stub_everything 'class'
@@ -303,6 +328,12 @@ describe RDoc::Parser do
             @parser.expects(:scan_for_resource).with(@rdoc_class, @code)
             @parser.document_class("mynode", @class, @module)
         end
+
+        it "should produce a better error message on unhandled exception" do
+            @module.stubs(:add_class).raises(ArgumentError)
+
+            lambda { @parser.document_class("mynode", @class, @module) }.should raise_error(Puppet::ParseError, /in file at line 42/)
+        end
     end
 
     describe "when scanning for includes and requires" do
@@ -321,6 +352,12 @@ describe RDoc::Parser do
             @code.stubs(:is_a?).with(Puppet::Parser::AST::ASTArray).returns(true)
         end
 
+        it "should also scan mono-instruction code" do
+            @class.expects(:add_include).with { |i| i.is_a?(RDoc::Include) and i.name == "myclass" and i.comment == "mydoc" }
+
+            @parser.scan_for_include_or_require(@class,create_stmt("include"))
+        end
+
         it "should register recursively includes to the current container" do
             @code.stubs(:children).returns([ create_stmt("include") ])
 
@@ -333,6 +370,36 @@ describe RDoc::Parser do
 
             @class.expects(:add_require).with { |i| i.is_a?(RDoc::Include) and i.name == "myclass" and i.comment == "mydoc" }
             @parser.scan_for_include_or_require(@class, [@code])
+        end
+    end
+
+    describe "when scanning for realized virtual resources" do
+
+        def create_stmt
+            stmt_value = stub "resource_ref", :to_s => "File[\"/tmp/a\"]"
+            stmt = stub_everything 'stmt', :name => "realize", :arguments => [stmt_value], :doc => "mydoc"
+            stmt.stubs(:is_a?).with(Puppet::Parser::AST::ASTArray).returns(false)
+            stmt.stubs(:is_a?).with(Puppet::Parser::AST::Function).returns(true)
+            stmt
+        end
+
+        before(:each) do
+            @class = stub_everything 'class'
+            @code = stub_everything 'code'
+            @code.stubs(:is_a?).with(Puppet::Parser::AST::ASTArray).returns(true)
+        end
+
+        it "should also scan mono-instruction code" do
+            @class.expects(:add_realize).with { |i| i.is_a?(RDoc::Include) and i.name == "File[\"/tmp/a\"]" and i.comment == "mydoc" }
+
+            @parser.scan_for_realize(@class,create_stmt())
+        end
+
+        it "should register recursively includes to the current container" do
+            @code.stubs(:children).returns([ create_stmt() ])
+
+            @class.expects(:add_realize).with { |i| i.is_a?(RDoc::Include) and i.name == "File[\"/tmp/a\"]" and i.comment == "mydoc" }
+            @parser.scan_for_realize(@class, [@code])
         end
     end
 
@@ -354,6 +421,12 @@ describe RDoc::Parser do
             @class.expects(:add_constant).with { |i| i.is_a?(RDoc::Constant) and i.name == "myvar" and i.comment == "mydoc" }
             @parser.scan_for_vardef(@class, [ @code ])
         end
+
+        it "should also scan mono-instruction code" do
+            @class.expects(:add_constant).with { |i| i.is_a?(RDoc::Constant) and i.name == "myvar" and i.comment == "mydoc" }
+
+            @parser.scan_for_vardef(@class, @stmt)
+        end
     end
 
     describe "when scanning for resources" do
@@ -374,6 +447,12 @@ describe RDoc::Parser do
 
             @class.expects(:add_resource).with { |i| i.is_a?(RDoc::PuppetResource) and i.title == "myfile" and i.comment == "mydoc" }
             @parser.scan_for_resource(@class, [ @code ])
+        end
+
+        it "should also scan mono-instruction code" do
+            @class.expects(:add_resource).with { |i| i.is_a?(RDoc::PuppetResource) and i.title == "myfile" and i.comment == "mydoc" }
+
+            @parser.scan_for_resource(@class, @stmt)
         end
     end
 

@@ -6,7 +6,7 @@ Puppet::Application.new(:puppetca) do
 
     should_parse_config
 
-    attr_accessor :mode, :all, :ca
+    attr_accessor :mode, :all, :ca, :digest
 
     def find_mode(opt)
         modes = Puppet::SSL::CertificateAuthority::Interface::INTERFACE_METHODS
@@ -20,6 +20,10 @@ Puppet::Application.new(:puppetca) do
 
     option("--all", "-a") do
         @all = true
+    end
+
+    option("--digest DIGEST") do |arg|
+        @digest = arg
     end
 
     option("--debug", "-d") do |arg|
@@ -43,7 +47,8 @@ Puppet::Application.new(:puppetca) do
             hosts = ARGV.collect { |h| puts h; h.downcase }
         end
         begin
-            @ca.apply(@mode, :to => hosts)
+            @ca.apply(:revoke, :to => hosts) if @mode == :destroy
+            @ca.apply(@mode, :to => hosts, :digest => @digest)
         rescue => detail
             puts detail.backtrace if Puppet[:trace]
             puts detail.to_s

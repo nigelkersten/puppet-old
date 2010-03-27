@@ -204,6 +204,16 @@ describe provider_class do
             @provider.process_match(command).should == false
         end
 
+        it "should return true for includes match" do
+            command = ["match", "fake value", "not_include JarJar"]
+            @provider.process_match(command).should == true
+        end
+
+        it "should return false for includes non match" do
+            command = ["match", "fake value", "not_include values"]
+            @provider.process_match(command).should == false
+        end
+
         it "should return true for an array match" do
             command = ["match", "fake value", "== ['set', 'of', 'values']"]
             @provider.process_match(command).should == true
@@ -308,7 +318,7 @@ describe provider_class do
             command = "set JarJar Binks"
             context = "/some/path/"
             @resource.expects(:[]).times(2).returns(command).then.returns(context)
-            @augeas.expects(:set).with("/some/path/JarJar", "Binks")
+            @augeas.expects(:set).with("/some/path/JarJar", "Binks").returns(true)
             @augeas.expects(:save).returns(true)
             @augeas.expects(:close)
             @provider.execute_changes.should == :executed
@@ -338,7 +348,7 @@ describe provider_class do
             command = "clear Jar/Jar"
             context = "/foo/"
             @resource.expects(:[]).times(2).returns(command).then.returns(context)
-            @augeas.expects(:clear).with("/foo/Jar/Jar")
+            @augeas.expects(:clear).with("/foo/Jar/Jar").returns(true)
             @augeas.expects(:save).returns(true)
             @augeas.expects(:close)
             @provider.execute_changes.should == :executed
@@ -380,7 +390,7 @@ describe provider_class do
             context = "/foo/"
             @resource.expects(:[]).times(2).returns(command).then.returns(context)
             @augeas.expects(:insert).with("/Jar/Jar", "Binks", false)
-            @augeas.expects(:clear).with("/foo/Jar/Jar")
+            @augeas.expects(:clear).with("/foo/Jar/Jar").returns(true)
             @augeas.expects(:save).returns(true)
             @augeas.expects(:close)
             @provider.execute_changes.should == :executed

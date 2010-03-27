@@ -3,10 +3,12 @@
 $: << File.expand_path('lib')
 $LOAD_PATH << File.join(File.dirname(__FILE__), 'tasks')
 
-require './lib/puppet.rb'
+require 'puppet.rb'
 require 'rake'
 require 'rake/packagetask'
 require 'rake/gempackagetask'
+require 'spec'
+require 'spec/rake/spectask'
 
 Dir['tasks/**/*.rake'].each { |t| load t }
 
@@ -20,6 +22,7 @@ FILES = FileList[
     'man/**/*',
     'examples/**/*',
     'ext/**/*',
+    'tasks/**/*',
     'test/**/*',
     'spec/**/*'
 ]
@@ -34,25 +37,13 @@ task :default do
     sh %{rake -T}
 end
 
+desc "Create the tarball and the gem - use when releasing"
 task :puppetpackages => [:create_gem, :package]
 
-desc "Run the specs under spec/"
-task :spec do
-    require 'spec'
-    require 'spec/rake/spectask'
-    begin
-        require 'rcov'
-    rescue LoadError
-    end
-
-    Spec::Rake::SpecTask.new do |t|
-        t.spec_opts = ['--format','s', '--loadby','mtime']
-        t.spec_files = FileList['spec/**/*.rb']
-        if defined?(Rcov)
-            t.rcov = true
-            t.rcov_opts = ['--exclude', 'spec/*,test/*,results/*,/usr/lib/*,/usr/local/lib/*']
-        end
-     end
+Spec::Rake::SpecTask.new do |t|
+    t.spec_opts = ['--format','s', '--loadby','mtime']
+    t.pattern ='spec/{unit,integation}/**/*.rb'
+    t.fail_on_error = false
 end
 
 desc "Run the unit tests"

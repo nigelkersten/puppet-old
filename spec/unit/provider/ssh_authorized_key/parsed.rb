@@ -33,7 +33,7 @@ describe provider_class do
     end
 
     def genkey(key)
-        @provider.filetype = :ram
+        @provider.stubs(:filetype).returns(Puppet::Util::FileType::FileTypeRam)
         file = @provider.default_target
 
         key.flush
@@ -78,13 +78,21 @@ describe provider_class do
 
         @provider.parse_options(optionstr).should == options
     end
+
+    it "should use '' as name for entries that lack a comment" do
+        line = "ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEAut8aOSxenjOqF527dlsdHWV4MNoAsX14l9M297+SQXaQ5Z3BedIxZaoQthkDALlV/25A1COELrg9J2MqJNQc8Xe9XQOIkBQWWinUlD/BXwoOTWEy8C8zSZPHZ3getMMNhGTBO+q/O+qiJx3y5cA4MTbw2zSxukfWC87qWwcZ64UUlegIM056vPsdZWFclS9hsROVEa57YUMrehQ1EGxT4Z5j6zIopufGFiAPjZigq/vqgcAqhAKP6yu4/gwO6S9tatBeEjZ8fafvj1pmvvIplZeMr96gHE7xS3pEEQqnB3nd4RY7AF6j9kFixnsytAUO7STPh/M3pLiVQBN89TvWPQ=="
+
+        @provider.parse(line)[0][:name].should == ""
+    end
 end
 
 describe provider_class do
     before :each do
         @resource = stub("resource", :name => "foo")
         @resource.stubs(:[]).returns "foo"
+
         @provider = provider_class.new(@resource)
+        provider_class.stubs(:filetype).returns(Puppet::Util::FileType::FileTypeRam)
     end
 
     describe "when flushing" do

@@ -2,6 +2,7 @@
 # and performs them
 
 require 'puppet'
+require 'puppet/util/tagging'
 
 module Puppet
 class Transaction
@@ -11,13 +12,11 @@ class Transaction
     attr_accessor :component, :catalog, :ignoreschedules
     attr_accessor :sorted_resources, :configurator
 
-    # The report, once generated.
-    attr_reader :report
-
     # The list of events generated in this transaction.
     attr_reader :events
 
     include Puppet::Util
+    include Puppet::Util::Tagging
 
     # Add some additional times for reporting
     def addtimes(hash)
@@ -276,33 +275,25 @@ class Transaction
     def evaluate
         @count = 0
 
-        # Start logging.
-        Puppet::Util::Log.newdestination(@report)
-
         prepare()
 
         Puppet.info "Applying configuration version '%s'" % catalog.version if catalog.version
 
-        begin
-            allevents = @sorted_resources.collect { |resource|
-                if resource.is_a?(Puppet::Type::Component)
-                    Puppet.warning "Somehow left a component in the relationship graph"
-                    next
-                end
-                ret = nil
-                seconds = thinmark do
-                    ret = eval_resource(resource)
-                end
+        allevents = @sorted_resources.collect { |resource|
+            if resource.is_a?(Puppet::Type::Component)
+                Puppet.warning "Somehow left a component in the relationship graph"
+                next
+            end
+            ret = nil
+            seconds = thinmark do
+                ret = eval_resource(resource)
+            end
 
-                if Puppet[:evaltrace] and @catalog.host_config?
-                    resource.info "Evaluated in %0.2f seconds" % seconds
-                end
-                ret
-            }.flatten.reject { |e| e.nil? }
-        ensure
-            # And then close the transaction log.
-            Puppet::Util::Log.close(@report)
-        end
+            if Puppet[:evaltrace] and @catalog.host_config?
+                resource.info "Evaluated in %0.2f seconds" % seconds
+            end
+            ret
+        }.flatten.reject { |e| e.nil? }
 
         Puppet.debug "Finishing transaction %s with %s changes" %
             [self.object_id, @count]
@@ -353,6 +344,7 @@ class Transaction
         made = [made] unless made.is_a?(Array)
         made.uniq.find_all do |res|
             begin
+                res.tag(*resource.tags)
                 @catalog.add_resource(res) do |r|
                     r.finish
                     make_parent_child_relationship(resource, [r])
@@ -379,8 +371,7 @@ class Transaction
         end
     end
 
-    # Generate a transaction report.
-    def generate_report
+    def add_metrics_to_report(report)
         @resourcemetrics[:failed] = @failures.find_all do |name, num|
             num > 0
         end.length
@@ -392,19 +383,15 @@ class Transaction
         end
 
         # Add all of the metrics related to resource count and status
-        @report.newmetric(:resources, @resourcemetrics)
+        report.newmetric(:resources, @resourcemetrics)
 
         # Record the relative time spent in each resource.
-        @report.newmetric(:time, @timemetrics)
+        report.newmetric(:time, @timemetrics)
 
         # Then all of the change-related metrics
-        @report.newmetric(:changes,
-            :total => @changes.length
-        )
+        report.newmetric(:changes, :total => @changes.length)
 
-        @report.time = Time.now
-
-        return @report
+        report.time = Time.now
     end
 
     # Should we ignore tags?
@@ -414,14 +401,8 @@ class Transaction
 
     # this should only be called by a Puppet::Type::Component resource now
     # and it should only receive an array
-    def initialize(resources)
-        if resources.is_a?(Puppet::Resource::Catalog)
-            @catalog = resources
-        elsif resources.is_a?(Puppet::SimpleGraph)
-            raise "Transactions should get catalogs now, not SimpleGraph"
-        else
-            raise "Transactions require catalogs"
-        end
+    def initialize(catalog)
+        @catalog = catalog
 
         @resourcemetrics = {
             :total => @catalog.vertices.length,
@@ -455,7 +436,6 @@ class Transaction
             h[key] = 0
         end
 
-        @report = Report.new
         @count = 0
     end
 
@@ -499,28 +479,6 @@ class Transaction
 
     def relationship_graph
         catalog.relationship_graph
-    end
-
-    # Send off the transaction report.
-    def send_report
-        begin
-            report = generate_report()
-        rescue => detail
-            Puppet.err "Could not generate report: %s" % detail
-            return
-        end
-
-        if Puppet[:summarize]
-            puts report.summary
-        end
-
-        if Puppet[:report]
-            begin
-                report.save()
-            rescue => detail
-                Puppet.err "Reporting failed: %s" % detail
-            end
-        end
     end
 
     # Roll all completed changes back.
@@ -601,26 +559,26 @@ class Transaction
     # The tags we should be checking.
     def tags
         unless defined? @tags
-            tags = Puppet[:tags]
-            if tags.nil? or tags == ""
-                @tags = []
-            else
-                @tags = tags.split(/\s*,\s*/)
-            end
+            self.tags = Puppet[:tags]
         end
 
-        @tags
+        super
     end
 
-    def tags=(tags)
-        tags = [tags] unless tags.is_a?(Array)
-        @tags = tags
+    def handle_qualified_tags( qualified )
+        # The default behavior of Puppet::Util::Tagging is
+        # to split qualified tags into parts. That would cause
+        # qualified tags to match too broadly here.
+        return
     end
 
     # Is this resource tagged appropriately?
     def missing_tags?(resource)
-        return false if self.ignore_tags? or tags.empty?
-        return true unless resource.tagged?(tags)
+        not appropriately_tagged?(resource)
+    end
+
+    def appropriately_tagged?(resource)
+        self.ignore_tags? or tags.empty? or resource.tagged?(*tags)
     end
 
     # Are there any edges that target this resource?

@@ -19,7 +19,6 @@ describe "Certificate REST Terminus" do
         Puppet.settings[:vardir] = @dir
         Puppet.settings[:server] = "127.0.0.1"
         Puppet.settings[:masterport] = "34343"
-        Puppet.settings[:http_enable_post_connection_check] = false
 
         Puppet::Util::Cacher.expire
 
@@ -41,7 +40,7 @@ describe "Certificate REST Terminus" do
 
         # Now remove the cached crl
         Puppet::SSL::Host.ca_location = :none
-        Puppet::SSL::CertificateRevocationList.destroy("ca")
+        Puppet::SSL::CertificateRevocationList.destroy(Puppet::SSL::CA_NAME)
 
         # This is necessary so that we create the SSL store before we start
         # using REST.  This is necessary to prevent an infinite loop,

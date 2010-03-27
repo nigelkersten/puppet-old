@@ -1,5 +1,7 @@
 require 'rdoc/generators/html_generator'
 require 'puppet/util/rdoc/code_objects'
+require 'digest/md5'
+
 module Generators
 
     # This module holds all the classes needed to generate the HTML documentation
@@ -334,8 +336,8 @@ module Generators
         def build_referenced_list(list)
             res = []
             list.each do |i|
-                ref = @context.find_symbol(i.name)
-                ref = ref.viewer if ref
+                ref = AllReferences[i.name] || @context.find_symbol(i.name)
+                ref = ref.viewer if ref and ref.respond_to?(:viewer)
                 name = i.respond_to?(:full_name) ? i.full_name : i.name
                 h_name = CGI.escapeHTML(name)
                 if ref and ref.document_self
@@ -364,7 +366,7 @@ module Generators
             resources.each do |r|
                 res << {
                   "name" => CGI.escapeHTML(r.name),
-                  "aref" => "#{path_prefix}\##{r.aref}"
+                  "aref" => CGI.escape(path_prefix)+"\#"+CGI.escape(r.aref)
                 }
             end
             res
@@ -409,6 +411,9 @@ module Generators
             rl = build_require_list(@context)
             @values["requires"] = rl unless rl.empty?
 
+            rl = build_realize_list(@context)
+            @values["realizes"] = rl unless rl.empty?
+
             cl = build_child_list(@context)
             @values["childs"] = cl unless cl.empty?
 
@@ -417,6 +422,10 @@ module Generators
 
         def build_require_list(context)
             build_referenced_list(context.requires)
+        end
+
+        def build_realize_list(context)
+            build_referenced_list(context.realizes)
         end
 
         def build_child_list(context)
@@ -458,7 +467,7 @@ module Generators
             if path['<<']
                 path.gsub!(/<<\s*(\w*)/) { "from-#$1" }
             end
-            File.join(prefix, path.split("::")) + ".html"
+            File.join(prefix, path.split("::").collect { |p| Digest::MD5.hexdigest(p) }) + ".html"
         end
 
         def parent_name
@@ -498,6 +507,9 @@ module Generators
 
             rl = build_require_list(@context)
             @values["requires"] = rl unless rl.empty?
+
+            rl = build_realize_list(@context)
+            @values["realizes"] = rl unless rl.empty?
 
             cl = build_child_list(@context)
             @values["childs"] = cl unless cl.empty?
@@ -558,7 +570,7 @@ module Generators
             h_name = CGI.escapeHTML(name)
 
             @values["classmod"]  = "Node"
-            @values["title"]     = "#{@values['classmod']}: #{h_name}"
+            @values["title"]     = CGI.escapeHTML("#{@values['classmod']}: #{h_name}")
 
             c = @context
             c = c.parent while c and !c.diagram
@@ -606,6 +618,10 @@ module Generators
 
         def build_require_list(context)
             build_referenced_list(context.requires)
+        end
+
+        def build_realize_list(context)
+            build_referenced_list(context.realizes)
         end
 
         def build_child_list(context)

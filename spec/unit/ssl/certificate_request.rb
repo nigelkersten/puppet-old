@@ -106,7 +106,7 @@ describe Puppet::SSL::CertificateRequest do
         end
 
         it "should log that it is creating a new certificate request" do
-            Puppet.expects(:info)
+            Puppet.expects(:info).twice
             @instance.generate(@key)
         end
 
@@ -115,6 +115,21 @@ describe Puppet::SSL::CertificateRequest do
             OpenSSL::X509::Name.expects(:new).with([["CN", @instance.name]]).returns(subject)
             @request.expects(:subject=).with(subject)
             @instance.generate(@key)
+        end
+
+        it "should set the CN to the CSR name when the CSR is not for a CA" do
+            subject = mock 'subject'
+            OpenSSL::X509::Name.expects(:new).with { |subject| subject[0][1] == @instance.name }.returns(subject)
+            @request.expects(:subject=).with(subject)
+            @instance.generate(@key)
+        end
+
+        it "should set the CN to the :ca_name setting when the CSR is for a CA" do
+            subject = mock 'subject'
+            Puppet.settings.expects(:value).with(:ca_name).returns "mycertname"
+            OpenSSL::X509::Name.expects(:new).with { |subject| subject[0][1] == "mycertname" }.returns(subject)
+            @request.expects(:subject=).with(subject)
+            Puppet::SSL::CertificateRequest.new(Puppet::SSL::CA_NAME).generate(@key)
         end
 
         it "should set the version to 0" do
@@ -147,6 +162,18 @@ describe Puppet::SSL::CertificateRequest do
             @request.expects(:verify).returns false
 
             lambda { @instance.generate(@key) }.should raise_error(Puppet::Error)
+        end
+
+        it "should fingerprint the request" do
+            @instance.expects(:fingerprint)
+            @instance.generate(@key)
+        end
+
+        it "should display the fingerprint" do
+            Puppet.stubs(:info)
+            @instance.stubs(:fingerprint).returns("FINGERPRINT")
+            Puppet.expects(:info).with { |s| s =~ /FINGERPRINT/ }
+            @instance.generate(@key)
         end
 
         it "should return the generated request" do

@@ -16,6 +16,8 @@ class Puppet::Parser::AST
             if ! options[:sensitive] && obj.respond_to?(:downcase)
                 obj = obj.downcase
             end
+            # "" == undef for case/selector/if
+            return true if obj == "" and value == :undef
             obj == value
         end
 
@@ -94,15 +96,12 @@ class Puppet::Parser::AST
         def initialize(hash)
             super
 
+            # Note that this is an AST::Regex, not a Regexp
             @value = @value.to_s.downcase unless @value.is_a?(Regex)
             if @value =~ /[^-\w.]/
                 raise Puppet::DevError,
                     "'%s' is not a valid hostname" % @value
             end
-        end
-
-        def to_classname
-            to_s.downcase.gsub(/[^-\w:.]/,'').sub(/^\.+/,'')
         end
 
         # implementing eql? and hash so that when an HostName is stored
@@ -114,25 +113,6 @@ class Puppet::Parser::AST
 
         def hash
             return @value.hash
-        end
-
-        def match(value)
-            return @value.match(value) unless value.is_a?(HostName)
-
-            if value.regex? and self.regex?
-                # Wow this is some sweet design; maybe a touch of refactoring
-                # in order here.
-                return value.value.value == self.value.value
-            elsif value.regex? # we know if the existing name is not a regex, it won't match a regex
-                return false
-            else
-                # else, we could be either a regex or normal and it doesn't matter
-                return @value.match(value.value)
-            end
-        end
-
-        def regex?
-            @value.is_a?(Regex)
         end
 
         def to_s
@@ -147,8 +127,55 @@ class Puppet::Parser::AST
         # not include syntactical constructs, like '$' and '{}').
         def evaluate(scope)
             parsewrap do
-                return scope.lookupvar(@value)
+                if (var = scope.lookupvar(@value, false)) == :undefined
+                    var = :undef
+                end
+                var
             end
+        end
+
+        def to_s
+            "\$#{value}"
+        end
+    end
+
+    class HashOrArrayAccess < AST::Leaf
+        attr_accessor :variable, :key
+
+        def evaluate_container(scope)
+            container = variable.respond_to?(:evaluate) ? variable.safeevaluate(scope) : variable
+            (container.is_a?(Hash) or container.is_a?(Array)) ? container : scope.lookupvar(container)
+        end
+
+        def evaluate_key(scope)
+            key.respond_to?(:evaluate) ? key.safeevaluate(scope) : key
+        end
+
+        def evaluate(scope)
+            object = evaluate_container(scope)
+
+            unless object.is_a?(Hash) or object.is_a?(Array)
+                raise Puppet::ParseError, "#{variable} is not an hash or array when accessing it with #{accesskey}"
+            end
+
+            return object[evaluate_key(scope)]
+        end
+
+        # Assign value to this hashkey or array index
+        def assign(scope, value)
+            object = evaluate_container(scope)
+            accesskey = evaluate_key(scope)
+
+            if object.is_a?(Hash) and object.include?(accesskey)
+                raise Puppet::ParseError, "Assigning to the hash '#{variable}' with an existing key '#{accesskey}' is forbidden"
+            end
+
+            # assign to hash or array
+            object[accesskey] = value
+        end
+
+        def to_s
+            "\$#{variable.to_s}[#{key.to_s}]"
         end
     end
 

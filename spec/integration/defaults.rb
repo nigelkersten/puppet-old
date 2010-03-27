@@ -29,6 +29,17 @@ describe "Puppet defaults" do
         end
     end
 
+    describe "when setting the :catalog_format" do
+        it "should log a deprecation notice" do
+            Puppet.expects(:warning)
+            Puppet.settings[:catalog_format] = 'marshal'
+        end
+        it "should copy the value to :preferred_serialization_format" do
+            Puppet.settings[:catalog_format] = 'marshal'
+            Puppet.settings[:preferred_serialization_format].should == 'marshal'
+        end
+    end
+
     it "should have a clientyamldir setting" do
         Puppet.settings[:clientyamldir].should_not be_nil
     end
@@ -203,5 +214,18 @@ describe "Puppet defaults" do
             Puppet.settings[:report_server] = "report_server"
             Puppet.settings[:report_server].should == "report_server"
         end
+    end
+    
+    it "should have a :caname setting that defaults to the cert name" do
+        Puppet.settings[:certname] = "foo"
+        Puppet.settings[:ca_name].should == "foo"
+    end
+
+    it "should have a 'prerun_command' that defaults to the empty string" do
+        Puppet.settings[:prerun_command].should == ""
+    end
+
+    it "should have a 'postrun_command' that defaults to the empty string" do
+        Puppet.settings[:postrun_command].should == ""
     end
 end

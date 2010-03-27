@@ -11,6 +11,7 @@ class Puppet::TestIndirectedFoo
     indirects :test_indirected_foo, :terminus_setting => :test_indirected_foo_terminus
 
     attr_reader :value
+    attr_accessor :name
 
     def initialize(value = 0)
         @value = value
@@ -40,7 +41,6 @@ describe Puppet::Indirector::REST do
         Puppet.settings[:vardir] = @dir
         Puppet.settings[:server] = "127.0.0.1"
         Puppet.settings[:masterport] = "34343"
-        Puppet.settings[:http_enable_post_connection_check] = false
 
         Puppet::SSL::Host.ca_location = :local
 
