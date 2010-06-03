@@ -1,5 +1,5 @@
 require 'puppet'
-require 'puppet/resource/reference'
+require 'puppet/resource'
 require 'yaml'
 
 module Puppet
@@ -36,7 +36,7 @@ module Puppet
 
         def ref
             unless defined? @ref
-                @ref = Puppet::Resource::Reference.new(@type, @name)
+                @ref = Puppet::Resource.new(@type, @name)
             end
             @ref.to_s
         end
@@ -49,7 +49,7 @@ module Puppet
         def to_component
             trans = TransObject.new(ref, :component)
             @params.each { |param,value|
-                next unless Puppet::Type::Component.validattr?(param)
+                next unless Puppet::Type::Component.valid_parameter?(param)
                 Puppet.debug "Defining %s on %s" % [param, ref]
                 trans[param] = value
             }
@@ -80,7 +80,7 @@ module Puppet
 
         # Create a normalized resource from our TransObject.
         def to_resource
-            result = Puppet::Resource.new(type, name, @params.dup)
+            result = Puppet::Resource.new(type, name, :parameters => @params.dup)
             result.tag(*tags)
 
             result
@@ -225,11 +225,11 @@ module Puppet
         def to_ref
             unless defined? @ref
                 if self.type and self.name
-                    @ref = Puppet::Resource::Reference.new(self.type, self.name)
+                    @ref = Puppet::Resource.new(self.type, self.name)
                 elsif self.type and ! self.name # This is old-school node types
-                    @ref = Puppet::Resource::Reference.new("node", self.type)
+                    @ref = Puppet::Resource.new("node", self.type)
                 elsif ! self.type and self.name
-                    @ref = Puppet::Resource::Reference.new("component", self.name)
+                    @ref = Puppet::Resource.new("component", self.name)
                 else
                     @ref = nil
                 end
@@ -244,7 +244,7 @@ module Puppet
         # Create a normalized resource from our TransObject.
         def to_resource
             params = defined?(@parameters) ? @parameters.dup : {}
-            Puppet::Resource.new(type, name, params)
+            Puppet::Resource.new(type, name, :parameters => params)
         end
 
         def param(param,value)

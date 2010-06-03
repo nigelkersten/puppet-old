@@ -52,7 +52,7 @@ module Puppet
             in the short term, it is highly recommended to migrate work from ``exec``
             to native Puppet types as quickly as possible.  If you find that
             you are doing a lot of work with ``exec``, please at least notify
-            us at Reductive Labs what you are doing, and hopefully we can work with
+            us at Puppet Labs what you are doing, and hopefully we can work with
             you to get a native resource type for the work you are doing."
 
         require 'open3'
@@ -70,10 +70,14 @@ module Puppet
             @checks.keys
         end
 
-        newproperty(:returns, :array_matching => :all) do |property|
+        newproperty(:returns, :array_matching => :all, :event => :executed_command) do |property|
             include Puppet::Util::Execution
             munge do |value|
                 value.to_s
+            end
+
+            def event_name
+                :executed_command
             end
 
             defaultto "0"

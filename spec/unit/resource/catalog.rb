@@ -100,9 +100,8 @@ describe Puppet::Resource::Catalog, "when compiling" do
     describe "when extracting transobjects" do
 
         def mkscope
-            @parser = Puppet::Parser::Parser.new :Code => ""
             @node = Puppet::Node.new("mynode")
-            @compiler = Puppet::Parser::Compiler.new(@node, @parser)
+            @compiler = Puppet::Parser::Compiler.new(@node)
 
             # XXX This is ridiculous.
             @compiler.send(:evaluate_main)
@@ -110,7 +109,7 @@ describe Puppet::Resource::Catalog, "when compiling" do
         end
 
         def mkresource(type, name)
-            Puppet::Parser::Resource.new(:type => type, :title => name, :source => @source, :scope => @scope)
+            Puppet::Parser::Resource.new(type, name, :source => @source, :scope => @scope)
         end
 
         it "should always create a TransBucket for the 'main' class" do
@@ -577,8 +576,7 @@ describe Puppet::Resource::Catalog, "when compiling" do
             @transaction = mock 'transaction'
             Puppet::Transaction.stubs(:new).returns(@transaction)
             @transaction.stubs(:evaluate)
-            @transaction.stubs(:cleanup)
-            @transaction.stubs(:addtimes)
+            @transaction.stubs(:add_times)
         end
 
         it "should create and evaluate a transaction" do
@@ -588,18 +586,13 @@ describe Puppet::Resource::Catalog, "when compiling" do
 
         it "should provide the catalog retrieval time to the transaction" do
             @catalog.retrieval_duration = 5
-            @transaction.expects(:addtimes).with(:config_retrieval => 5)
+            @transaction.expects(:add_times).with(:config_retrieval => 5)
             @catalog.apply
         end
 
         it "should use a retrieval time of 0 if none is set in the catalog" do
             @catalog.retrieval_duration = nil
-            @transaction.expects(:addtimes).with(:config_retrieval => 0)
-            @catalog.apply
-        end
-
-        it "should clean up the transaction" do
-            @transaction.expects :cleanup
+            @transaction.expects(:add_times).with(:config_retrieval => 0)
             @catalog.apply
         end
 
@@ -625,37 +618,6 @@ describe Puppet::Resource::Catalog, "when compiling" do
         it "should set ignoreschedules on the transaction if specified in apply()" do
             @transaction.expects(:ignoreschedules=).with(true)
             @catalog.apply(:ignoreschedules => true)
-        end
-
-        it "should remove resources created mid-transaction" do
-            args = {:name => "/yay", :ensure => :file}
-            resource = stub 'file', :ref => "File[/yay]", :catalog= => @catalog, :title => "/yay", :[] => "/yay"
-            @transaction = mock 'transaction'
-            Puppet::Transaction.stubs(:new).returns(@transaction)
-            @transaction.stubs(:evaluate)
-            @transaction.stubs(:cleanup)
-            @transaction.stubs(:addtimes)
-            Puppet::Type.type(:file).expects(:new).with(args).returns(resource)
-            resource.expects :remove
-            @catalog.apply do |trans|
-                @catalog.create_resource :file, args
-                @catalog.resource("File[/yay]").should equal(resource)
-            end
-            @catalog.resource("File[/yay]").should be_nil
-        end
-
-        it "should remove resources added mid-transaction" do
-            @transaction = mock 'transaction'
-            Puppet::Transaction.stubs(:new).returns(@transaction)
-            @transaction.stubs(:evaluate)
-            @transaction.stubs(:cleanup)
-            @transaction.stubs(:addtimes)
-            file = Puppet::Type.type(:file).new(:name => "/yay", :ensure => :file)
-            @catalog.apply do |trans|
-                @catalog.add_resource file
-                @catalog.resource("File[/yay]").should_not be_nil
-            end
-            @catalog.resource("File[/yay]").should be_nil
         end
 
         it "should expire cached data in the resources both before and after the transaction" do
@@ -820,6 +782,8 @@ describe Puppet::Resource::Catalog, "when compiling" do
 
     describe "when indirecting" do
         before do
+            @real_indirection = Puppet::Resource::Catalog.indirection
+
             @indirection = stub 'indirection', :name => :catalog
 
             Puppet::Util::Cacher.expire
@@ -831,12 +795,24 @@ describe Puppet::Resource::Catalog, "when compiling" do
             Puppet::Resource::Catalog.find(:myconfig)
         end
 
-        it "should default to the 'compiler' terminus" do
-            Puppet::Resource::Catalog.indirection.terminus_class.should == :compiler
+        it "should use the value of the 'catalog_terminus' setting to determine its terminus class" do
+            # Puppet only checks the terminus setting the first time you ask
+            # so this returns the object to the clean state
+            # at the expense of making this test less pure
+            Puppet::Resource::Catalog.indirection.reset_terminus_class
+
+            Puppet.settings[:catalog_terminus] = "rest"
+            Puppet::Resource::Catalog.indirection.terminus_class.should == :rest
+        end
+
+        it "should allow the terminus class to be set manually" do
+            Puppet::Resource::Catalog.indirection.terminus_class = :rest
+            Puppet::Resource::Catalog.indirection.terminus_class.should == :rest
         end
 
         after do
             Puppet::Util::Cacher.expire
+            @real_indirection.reset_terminus_class
         end
     end
 

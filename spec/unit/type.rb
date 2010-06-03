@@ -7,6 +7,18 @@ describe Puppet::Type do
         Puppet::Type.ancestors.should be_include(Puppet::Util::Cacher)
     end
 
+    it "should consider a parameter to be valid if it is a valid parameter" do
+        Puppet::Type.type(:mount).should be_valid_parameter(:path)
+    end
+
+    it "should consider a parameter to be valid if it is a valid property" do
+        Puppet::Type.type(:mount).should be_valid_parameter(:fstype)
+    end
+
+    it "should consider a parameter to be valid if it is a valid metaparam" do
+        Puppet::Type.type(:mount).should be_valid_parameter(:noop)
+    end
+
     it "should use its catalog as its expirer" do
         catalog = Puppet::Resource::Catalog.new
         resource = Puppet::Type.type(:mount).new(:name => "foo", :fstype => "bar", :pass => 1, :ensure => :present)
@@ -32,6 +44,15 @@ describe Puppet::Type do
     it "should be able to retrieve a property by name using the :parameter method" do
         resource = Puppet::Type.type(:mount).new(:name => "foo", :fstype => "bar", :pass => 1, :ensure => :present)
         resource.parameter(:fstype).must be_instance_of(Puppet::Type.type(:mount).attrclass(:fstype))
+    end
+
+    it "should be able to retrieve all set properties" do
+        resource = Puppet::Type.type(:mount).new(:name => "foo", :fstype => "bar", :pass => 1, :ensure => :present)
+        props = resource.properties
+        props.should_not be_include(nil)
+        [:fstype, :ensure, :pass].each do |name|
+            props.should be_include(resource.parameter(name))
+        end
     end
 
     it "should have a method for setting default values for resources" do
@@ -98,6 +119,36 @@ describe Puppet::Type do
         resource.source_descriptors.should == {:version=>50, :tags=>["mount", "foo"], :path=>"/Mount[foo]"}
     end
 
+    it "should consider its type to be the name of its class" do
+        Puppet::Type.type(:mount).new(:name => "foo").type.should == :mount
+    end
+
+    describe "when creating an event" do
+        before do
+            @resource = Puppet::Type.type(:mount).new :name => "foo"
+        end
+
+        it "should have the resource's reference as the resource" do
+            @resource.event.resource.should == "Mount[foo]"
+        end
+
+        it "should have the resource's log level as the default log level" do
+            @resource[:loglevel] = :warning
+            @resource.event.default_log_level.should == :warning
+        end
+
+        {:file => "/my/file", :line => 50, :tags => %{foo bar}, :version => 50}.each do |attr, value|
+            it "should set the #{attr}" do
+                @resource.stubs(attr).returns value
+                @resource.event.send(attr).should == value
+            end
+        end
+
+        it "should allow specification of event attributes" do
+            @resource.event(:status => "noop").status.should == "noop"
+        end
+    end
+
     describe "when choosing a default provider" do
         it "should choose the provider with the highest specificity" do
             # Make a fake type
@@ -125,7 +176,7 @@ describe Puppet::Type do
 
         describe "and passed a Puppet::Resource instance" do
             it "should set its title to the title of the resource if the resource type is equal to the current type" do
-                resource = Puppet::Resource.new(:mount, "/foo", :name => "/other")
+                resource = Puppet::Resource.new(:mount, "/foo", :parameters => {:name => "/other"})
                 Puppet::Type.type(:mount).new(resource).title.should == "/foo"
             end
 
@@ -152,7 +203,7 @@ describe Puppet::Type do
             end
 
             it "should copy the resource's parameters as its own" do
-                resource = Puppet::Resource.new(:mount, "/foo", :atboot => true, :fstype => "boo")
+                resource = Puppet::Resource.new(:mount, "/foo", :parameters => {:atboot => true, :fstype => "boo"})
                 params = Puppet::Type.type(:mount).new(resource).to_hash
                 params[:fstype].should == "boo"
                 params[:atboot].should == true
@@ -214,7 +265,7 @@ describe Puppet::Type do
 
         it "should set the attributes in the order returned by the class's :allattrs method" do
             Puppet::Type.type(:mount).stubs(:allattrs).returns([:name, :atboot, :noop])
-            resource = Puppet::Resource.new(:mount, "/foo", :name => "myname", :atboot => "myboot", :noop => "whatever")
+            resource = Puppet::Resource.new(:mount, "/foo", :parameters => {:name => "myname", :atboot => "myboot", :noop => "whatever"})
 
             set = []
 
@@ -231,7 +282,7 @@ describe Puppet::Type do
 
         it "should always set the name and then default provider before anything else" do
             Puppet::Type.type(:mount).stubs(:allattrs).returns([:provider, :name, :atboot])
-            resource = Puppet::Resource.new(:mount, "/foo", :name => "myname", :atboot => "myboot")
+            resource = Puppet::Resource.new(:mount, "/foo", :parameters => {:name => "myname", :atboot => "myboot"})
 
             set = []
 
@@ -320,32 +371,49 @@ describe Puppet::Type do
     end
 
     describe "when retrieving current property values" do
-        # Use 'mount' as an example, because it doesn't override 'retrieve'
         before do
             @resource = Puppet::Type.type(:mount).new(:name => "foo", :fstype => "bar", :pass => 1, :ensure => :present)
-            @properties = {}
+            @resource.property(:ensure).stubs(:retrieve).returns :absent
         end
 
-        it "should return a hash containing values for all set properties" do
+        it "should fail if its provider is unsuitable" do
+            @resource = Puppet::Type.type(:mount).new(:name => "foo", :fstype => "bar", :pass => 1, :ensure => :present)
+            @resource.provider.class.expects(:suitable?).returns false
+            lambda { @resource.retrieve }.should raise_error(Puppet::Error)
+        end
+
+        it "should return a Puppet::Resource instance with its type and title set appropriately" do
+            result = @resource.retrieve
+            result.should be_instance_of(Puppet::Resource)
+            result.type.should == "Mount"
+            result.title.should == "foo"
+        end
+
+        it "should set the name of the returned resource if its own name and title differ" do
+            @resource[:name] = "my name"
+            @resource.title = "other name"
+            @resource.retrieve[:name].should == "my name"
+        end
+
+        it "should provide a value for all set properties" do
             values = @resource.retrieve
-            [@resource.property(:fstype), @resource.property(:pass)].each { |property| values.should be_include(property) }
+            [:ensure, :fstype, :pass].each { |property| values[property].should_not be_nil }
         end
 
-        it "should not call retrieve on non-ensure properties if the resource is absent" do
+        it "should provide a value for 'ensure' even if no desired value is provided" do
+            @resource = Puppet::Type.type(:file).new(:path => "/my/file/that/can't/exist")
+        end
+
+        it "should not call retrieve on non-ensure properties if the resource is absent and should consider the property absent" do
             @resource.property(:ensure).expects(:retrieve).returns :absent
             @resource.property(:fstype).expects(:retrieve).never
-            @resource.retrieve[@resource.property(:fstype)]
-        end
-
-        it "should set all values to :absent if the resource is absent" do
-            @resource.property(:ensure).expects(:retrieve).returns :absent
-            @resource.retrieve[@resource.property(:fstype)].should == :absent
+            @resource.retrieve[:fstype].should == :absent
         end
 
         it "should include the result of retrieving each property's current value if the resource is present" do
             @resource.property(:ensure).expects(:retrieve).returns :present
             @resource.property(:fstype).expects(:retrieve).returns 15
-            @resource.retrieve[@resource.property(:fstype)].should == 15
+            @resource.retrieve[:fstype] == 15
         end
     end
 
@@ -396,13 +464,13 @@ describe Puppet::Type::RelationshipMetaparam do
             @metaparam = Puppet::Type.metaparamclass(:require).new :resource => @resource
         end
 
-        it "should accept Puppet::Resource::Reference instances" do
-            ref = Puppet::Resource::Reference.new(:file, "/foo")
+        it "should accept Puppet::Resource instances" do
+            ref = Puppet::Resource.new(:file, "/foo")
             @metaparam.munge(ref)[0].should equal(ref)
         end
 
-        it "should turn any string into a Puppet::Resource::Reference" do
-            @metaparam.munge("File[/ref]")[0].should be_instance_of(Puppet::Resource::Reference)
+        it "should turn any string into a Puppet::Resource" do
+            @metaparam.munge("File[/ref]")[0].should be_instance_of(Puppet::Resource)
         end
     end
 
@@ -417,9 +485,9 @@ describe Puppet::Type::RelationshipMetaparam do
         param = Puppet::Type.metaparamclass(:require).new(:resource => resource, :value => %w{Foo[bar] Class[test]})
 
         catalog.expects(:resource).with("Foo[bar]").returns "something"
-        catalog.expects(:resource).with("Class[test]").returns nil
+        catalog.expects(:resource).with("Class[Test]").returns nil
 
-        param.expects(:fail).with { |string| string.include?("Class[test]") }
+        param.expects(:fail).with { |string| string.include?("Class[Test]") }
 
         param.validate_relationship
     end

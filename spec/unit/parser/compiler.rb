@@ -33,11 +33,37 @@ end
 describe Puppet::Parser::Compiler do
     before :each do
         @node = Puppet::Node.new "testnode"
-        @parser = Puppet::Parser::Parser.new :environment => "development"
+        @known_resource_types = Puppet::Resource::TypeCollection.new "development"
 
-        @scope_resource = stub 'scope_resource', :builtin? => true, :finish => nil, :ref => 'Class[main]', :type => "class"
-        @scope = stub 'scope', :resource => @scope_resource, :source => mock("source")
-        @compiler = Puppet::Parser::Compiler.new(@node, @parser)
+        @compiler = Puppet::Parser::Compiler.new(@node)
+        @scope = Puppet::Parser::Scope.new(:compiler => @compiler, :source => "fake_source")
+        @scope_resource = Puppet::Parser::Resource.new(:file, "/my/file", :scope => @scope)
+        @scope.resource = @scope_resource
+        @compiler.environment.stubs(:known_resource_types).returns @known_resource_types
+    end
+
+    it "should have a class method that compiles, converts, and returns a catalog" do
+        compiler = stub 'compiler'
+        Puppet::Parser::Compiler.expects(:new).with(@node).returns compiler
+        catalog = stub 'catalog'
+        compiler.expects(:compile).returns catalog
+        converted_catalog = stub 'converted_catalog'
+        catalog.expects(:to_resource).returns converted_catalog
+
+        Puppet::Parser::Compiler.compile(@node).should equal(converted_catalog)
+    end
+
+    it "should fail intelligently when a class-level compile fails" do
+        Puppet::Parser::Compiler.expects(:new).raises ArgumentError
+        lambda { Puppet::Parser::Compiler.compile(@node) }.should raise_error(Puppet::Error)
+    end
+
+    it "should use the node's environment as its environment" do
+        @compiler.environment.should equal(@node.environment)
+    end
+
+    it "should include the resource type collection helper" do
+        Puppet::Parser::Compiler.ancestors.should be_include(Puppet::Resource::TypeCollectionHelper)
     end
 
     it "should be able to return a class list containing all added classes" do
@@ -53,29 +79,23 @@ describe Puppet::Parser::Compiler do
         it "should set its node attribute" do
             @compiler.node.should equal(@node)
         end
-
-        it "should set its parser attribute" do
-            @compiler.parser.should equal(@parser)
-        end
-
         it "should detect when ast nodes are absent" do
             @compiler.ast_nodes?.should be_false
         end
 
         it "should detect when ast nodes are present" do
-            @parser.expects(:nodes?).returns true
+            @known_resource_types.expects(:nodes?).returns true
             @compiler.ast_nodes?.should be_true
         end
 
-        it "should copy the parser version to the catalog" do
-            @compiler.catalog.version.should == @parser.version
+        it "should copy the known_resource_types version to the catalog" do
+            @compiler.catalog.version.should == @known_resource_types.version
         end
 
         it "should copy any node classes into the class list" do
             node = Puppet::Node.new("mynode")
             node.classes = %w{foo bar}
-            compiler = Puppet::Parser::Compiler.new(node, @parser)
-            p compiler.classlist
+            compiler = Puppet::Parser::Compiler.new(node)
 
             compiler.classlist.should include("foo")
             compiler.classlist.should include("bar")
@@ -115,7 +135,7 @@ describe Puppet::Parser::Compiler do
 
         def compile_methods
             [:set_node_parameters, :evaluate_main, :evaluate_ast_node, :evaluate_node_classes, :evaluate_generators, :fail_on_unevaluated,
-                :finish, :store, :extract]
+                :finish, :store, :extract, :evaluate_relationships]
         end
 
         # Stub all of the main compile methods except the ones we're specifically interested in.
@@ -155,12 +175,17 @@ describe Puppet::Parser::Compiler do
 
         it "should evaluate the main class if it exists" do
             compile_stub(:evaluate_main)
-            main_class = mock 'main_class'
+            main_class = @known_resource_types.add Puppet::Resource::Type.new(:hostclass, "")
             main_class.expects(:evaluate_code).with { |r| r.is_a?(Puppet::Parser::Resource) }
             @compiler.topscope.expects(:source=).with(main_class)
-            @parser.stubs(:find_hostclass).with("", "").returns(main_class)
 
             @compiler.compile
+        end
+
+        it "should create a new, empty 'main' if no main class exists" do
+            compile_stub(:evaluate_main)
+            @compiler.compile
+            @known_resource_types.find_hostclass([""], "").should be_instance_of(Puppet::Resource::Type)
         end
 
         it "should evaluate any node classes" do
@@ -225,35 +250,103 @@ describe Puppet::Parser::Compiler do
             @compiler.compile
         end
 
-        it "should call finish() on all resources" do
-            # Add a resource that does respond to :finish
-            resource = Puppet::Parser::Resource.new :scope => @scope, :type => "file", :title => "finish"
-            resource.expects(:finish)
+        describe "when finishing" do
+            before do
+                @compiler.send(:evaluate_main)
+                @catalog = @compiler.catalog
+            end
 
-            @compiler.add_resource(@scope, resource)
+            def add_resource(name, parent = nil)
+                resource = Puppet::Parser::Resource.new "file", name, :scope => @scope
+                @compiler.add_resource(@scope, resource)
+                @catalog.add_edge(parent, resource) if parent
+                resource
+            end
 
-            # And one that does not
-            dnf = stub "dnf", :ref => "File[dnf]", :type => "file"
+            it "should call finish() on all resources" do
+                # Add a resource that does respond to :finish
+                resource = Puppet::Parser::Resource.new "file", "finish", :scope => @scope
+                resource.expects(:finish)
 
-            @compiler.add_resource(@scope, dnf)
+                @compiler.add_resource(@scope, resource)
 
-            @compiler.send(:finish)
-        end
+                # And one that does not
+                dnf = stub "dnf", :ref => "File[dnf]", :type => "file"
 
-        it "should call finish() in add_resource order" do
-            resources = sequence('resources')
+                @compiler.add_resource(@scope, dnf)
 
-            resource1 = Puppet::Parser::Resource.new :scope => @scope, :type => "file", :title => "finish1"
-            resource1.expects(:finish).in_sequence(resources)
+                @compiler.send(:finish)
+            end
 
-            @compiler.add_resource(@scope, resource1)
+            it "should call finish() in add_resource order" do
+                resources = sequence('resources')
 
-            resource2 = Puppet::Parser::Resource.new :scope => @scope, :type => "file", :title => "finish2"
-            resource2.expects(:finish).in_sequence(resources)
+                resource1 = add_resource("finish1")
+                resource1.expects(:finish).in_sequence(resources)
 
-            @compiler.add_resource(@scope, resource2)
+                resource2 = add_resource("finish2")
+                resource2.expects(:finish).in_sequence(resources)
 
-            @compiler.send(:finish)
+                @compiler.send(:finish)
+            end
+
+            it "should add each container's metaparams to its contained resources" do
+                main = @catalog.resource(:class, :main)
+                main[:noop] = true
+
+                resource1 = add_resource("meh", main)
+
+                @compiler.send(:finish)
+                resource1[:noop].should be_true
+            end
+
+            it "should add metaparams recursively" do
+                main = @catalog.resource(:class, :main)
+                main[:noop] = true
+
+                resource1 = add_resource("meh", main)
+                resource2 = add_resource("foo", resource1)
+
+                @compiler.send(:finish)
+                resource2[:noop].should be_true
+            end
+
+            it "should prefer metaparams from immediate parents" do
+                main = @catalog.resource(:class, :main)
+                main[:noop] = true
+
+                resource1 = add_resource("meh", main)
+                resource2 = add_resource("foo", resource1)
+
+                resource1[:noop] = false
+
+                @compiler.send(:finish)
+                resource2[:noop].should be_false
+            end
+
+            it "should merge tags downward" do
+                main = @catalog.resource(:class, :main)
+                main.tag("one")
+
+                resource1 = add_resource("meh", main)
+                resource1.tag "two"
+                resource2 = add_resource("foo", resource1)
+
+                @compiler.send(:finish)
+                resource2.tags.should be_include("one")
+                resource2.tags.should be_include("two")
+            end
+
+            it "should work if only middle resources have metaparams set" do
+                main = @catalog.resource(:class, :main)
+
+                resource1 = add_resource("meh", main)
+                resource1[:noop] = true
+                resource2 = add_resource("foo", resource1)
+
+                @compiler.send(:finish)
+                resource2[:noop].should be_true
+            end
         end
 
         it "should return added resources in add order" do
@@ -370,6 +463,15 @@ describe Puppet::Parser::Compiler do
         end
     end
 
+    describe "when evaluating relationships" do
+        it "should evaluate each relationship with its catalog" do
+            dep = stub 'dep'
+            dep.expects(:evaluate).with(@compiler.catalog)
+            @compiler.add_relationship dep
+            @compiler.evaluate_relationships
+        end
+    end
+
     describe "when told to evaluate missing classes" do
 
         it "should fail if there's no source listed for the scope" do
@@ -463,7 +565,7 @@ describe Puppet::Parser::Compiler do
 
         it "should do nothing" do
             @compiler.expects(:ast_nodes?).returns(false)
-            @compiler.parser.expects(:nodes).never
+            @compiler.known_resource_types.expects(:nodes).never
             Puppet::Parser::Resource.expects(:new).never
 
             @compiler.send(:evaluate_ast_node)
@@ -473,16 +575,16 @@ describe Puppet::Parser::Compiler do
     describe "when evaluating AST nodes with AST nodes present" do
 
         before do
-            @compiler.parser.stubs(:nodes?).returns true
+            @compiler.known_resource_types.stubs(:nodes?).returns true
 
             # Set some names for our test
             @node.stubs(:names).returns(%w{a b c})
-            @compiler.parser.stubs(:node).with("a").returns(nil)
-            @compiler.parser.stubs(:node).with("b").returns(nil)
-            @compiler.parser.stubs(:node).with("c").returns(nil)
+            @compiler.known_resource_types.stubs(:node).with("a").returns(nil)
+            @compiler.known_resource_types.stubs(:node).with("b").returns(nil)
+            @compiler.known_resource_types.stubs(:node).with("c").returns(nil)
 
             # It should check this last, of course.
-            @compiler.parser.stubs(:node).with("default").returns(nil)
+            @compiler.known_resource_types.stubs(:node).with("default").returns(nil)
         end
 
         it "should fail if the named node cannot be found" do
@@ -491,7 +593,7 @@ describe Puppet::Parser::Compiler do
 
         it "should evaluate the first node class matching the node name" do
             node_class = stub 'node', :name => "c", :evaluate_code => nil
-            @compiler.parser.stubs(:node).with("c").returns(node_class)
+            @compiler.known_resource_types.stubs(:node).with("c").returns(node_class)
 
             node_resource = stub 'node resource', :ref => "Node[c]", :evaluate => nil, :type => "node"
             node_class.expects(:mk_plain_resource).returns(node_resource)
@@ -501,7 +603,7 @@ describe Puppet::Parser::Compiler do
 
         it "should match the default node if no matching node can be found" do
             node_class = stub 'node', :name => "default", :evaluate_code => nil
-            @compiler.parser.stubs(:node).with("default").returns(node_class)
+            @compiler.known_resource_types.stubs(:node).with("default").returns(node_class)
 
             node_resource = stub 'node resource', :ref => "Node[default]", :evaluate => nil, :type => "node"
             node_class.expects(:mk_plain_resource).returns(node_resource)
@@ -511,7 +613,7 @@ describe Puppet::Parser::Compiler do
 
         it "should evaluate the node resource immediately rather than using lazy evaluation" do
             node_class = stub 'node', :name => "c"
-            @compiler.parser.stubs(:node).with("c").returns(node_class)
+            @compiler.known_resource_types.stubs(:node).with("c").returns(node_class)
 
             node_resource = stub 'node resource', :ref => "Node[c]", :type => "node"
             node_class.expects(:mk_plain_resource).returns(node_resource)
@@ -525,7 +627,7 @@ describe Puppet::Parser::Compiler do
             node_resource = stub 'node resource', :ref => "Node[c]", :evaluate => nil, :type => "node"
             node_class = stub 'node', :name => "c", :mk_plain_resource => node_resource
 
-            @compiler.parser.stubs(:node).with("c").returns(node_class)
+            @compiler.known_resource_types.stubs(:node).with("c").returns(node_class)
 
             # The #evaluate method normally does this.
             scope = stub 'scope', :source => "mysource"

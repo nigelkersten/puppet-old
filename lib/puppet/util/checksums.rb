@@ -1,6 +1,11 @@
 # A stand-alone module for calculating checksums
 # in a generic way.
 module Puppet::Util::Checksums
+    # Is the provided string a checksum?
+    def checksum?(string)
+        string =~ /^\{(\w{3,5})\}\S+/
+    end
+
     # Strip the checksum type from an existing checksum
     def sumtype(checksum)
         if checksum =~ /^\{(\w+)\}/
@@ -34,10 +39,26 @@ module Puppet::Util::Checksums
         md5_file(filename, true)
     end
 
+    def md5_stream(&block)
+        require 'digest/md5'
+        digest = Digest::MD5.new()
+        yield digest
+        return digest.hexdigest
+    end
+
+    alias :md5lite_stream :md5_stream
+
     # Return the :mtime timestamp of a file.
     def mtime_file(filename)
         File.stat(filename).send(:mtime)
     end
+
+    # by definition this doesn't exist
+    def mtime_stream
+        nil
+    end
+
+    alias :ctime_stream :mtime_stream
 
     # Calculate a checksum using Digest::SHA1.
     def sha1(content)
@@ -63,6 +84,15 @@ module Puppet::Util::Checksums
         sha1_file(filename, true)
     end
 
+    def sha1_stream
+        require 'digest/sha1'
+        digest = Digest::SHA1.new()
+        yield digest
+        return digest.hexdigest
+    end
+
+    alias :sha1lite_stream :sha1_stream
+
     # Return the :ctime of a file.
     def ctime_file(filename)
         File.stat(filename).send(:ctime)
@@ -70,6 +100,10 @@ module Puppet::Util::Checksums
 
     # Return a "no checksum"
     def none_file(filename)
+        ""
+    end
+
+    def none_stream
         ""
     end
 

@@ -24,7 +24,7 @@ module Puppet
 
                 class sendmail {
                     file { \"/etc/mail/sendmail.cf\":
-                        source => \"puppet://server/module/sendmail.cf\"
+                        source => \"puppet://server/modules/module_name/sendmail.cf\"
                     }
                 }
 
@@ -51,9 +51,9 @@ module Puppet
 
                 file { \"/path/to/my/file\":
                     source => [
-                        \"/nfs/files/file.$host\",
-                        \"/nfs/files/file.$operatingsystem\",
-                        \"/nfs/files/file\"
+                        \"/modules/nfs/files/file.$host\",
+                        \"/modules/nfs/files/file.$operatingsystem\",
+                        \"/modules/nfs/files/file\"
                     ]
                 }
 
@@ -96,27 +96,21 @@ module Puppet
             metadata && metadata.checksum
         end
 
-        # Look up (if necessary) and return remote content.
-        cached_attr(:content) do
-            raise Puppet::DevError, "No source for content was stored with the metadata" unless metadata.source
-
-            unless tmp = Puppet::FileServing::Content.find(metadata.source)
-                fail "Could not find any content at %s" % metadata.source
-            end
-            tmp.content
-        end
-
         # Copy the values from the source to the resource.  Yay.
         def copy_source_values
             devfail "Somehow got asked to copy source values without any metadata" unless metadata
 
             # Take each of the stats and set them as states on the local file
             # if a value has not already been provided.
-            [:owner, :mode, :group, :checksum].each do |param|
-                next if param == :owner and Puppet::Util::SUIDManager.uid != 0
-                next if param == :checksum and metadata.ftype == "directory"
-                unless value = resource[param] and value != :absent
-                    resource[param] = metadata.send(param)
+            [:owner, :mode, :group, :checksum].each do |metadata_method|
+                param_name = (metadata_method == :checksum) ? :content : metadata_method
+                next if metadata_method == :owner and Puppet::Util::SUIDManager.uid != 0
+                next if metadata_method == :checksum and metadata.ftype == "directory"
+
+                if resource[param_name].nil? or resource[param_name] == :absent
+                    v = metadata.send(metadata_method)
+                    resource.info "Setting #{param_name} to #{v}"
+                    resource[param_name] = metadata.send(metadata_method)
                 end
             end
 
@@ -170,6 +164,30 @@ module Puppet
 
             resource[:check] = checks
             resource[:checksum] = :md5 unless resource.property(:checksum)
+        end
+
+        def local?
+            found? and uri and (uri.scheme || "file") == "file"
+        end
+
+        def full_path
+            if found? and uri
+                return URI.unescape(uri.path)
+            end
+        end
+
+        def server
+            (uri and uri.host) or Puppet.settings[:server]
+        end
+
+        def port
+            (uri and uri.port) or Puppet.settings[:masterport]
+        end
+
+        private
+
+        def uri
+            @uri ||= URI.parse(URI.escape(metadata.source))
         end
     end
 end

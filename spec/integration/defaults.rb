@@ -48,6 +48,14 @@ describe "Puppet defaults" do
         Puppet.settings[:yamldir].should_not == Puppet.settings[:clientyamldir]
     end
 
+    it "should have a client_datadir setting" do
+        Puppet.settings[:client_datadir].should_not be_nil
+    end
+
+    it "should have different values for the server_datadir and client_datadir" do
+        Puppet.settings[:server_datadir].should_not == Puppet.settings[:client_datadir]
+    end
+
     # See #1232
     it "should not specify a user or group for the clientyamldir" do
         Puppet.settings.setting(:clientyamldir).owner.should be_nil
@@ -227,5 +235,13 @@ describe "Puppet defaults" do
 
     it "should have a 'postrun_command' that defaults to the empty string" do
         Puppet.settings[:postrun_command].should == ""
+    end
+
+    it "should have a 'certificate_revocation' setting that defaults to true" do
+        Puppet.settings[:certificate_revocation].should be_true
+    end
+
+    it "should have an http_compression setting that defaults to false" do
+        Puppet.settings[:http_compression].should be_false
     end
 end

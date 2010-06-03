@@ -1,3 +1,4 @@
+require 'puppet/resource'
 require 'puppet/node'
 require 'puppet/indirector'
 require 'puppet/simple_graph'
@@ -16,7 +17,7 @@ class Puppet::Resource::Catalog < Puppet::SimpleGraph
     class DuplicateResourceError < Puppet::Error; end
 
     extend Puppet::Indirector
-    indirects :catalog, :terminus_class => :compiler
+    indirects :catalog, :terminus_setting => :catalog_terminus
 
     include Puppet::Util::Tagging
     extend Puppet::Util::Pson
@@ -79,7 +80,7 @@ class Puppet::Resource::Catalog < Puppet::SimpleGraph
 
             # If the name and title differ, set up an alias
 
-            if resource.respond_to?(:name) and resource.respond_to?(:title) and resource.name != resource.title
+            if resource.respond_to?(:name) and resource.respond_to?(:title) and resource.respond_to?(:isomorphic?) and resource.name != resource.title
                 self.alias(resource, resource.name) if resource.isomorphic?
             end
 
@@ -132,11 +133,11 @@ class Puppet::Resource::Catalog < Puppet::SimpleGraph
         Puppet::Util::Storage.load if host_config?
         transaction = Puppet::Transaction.new(self)
 
+        transaction.report = options[:report] if options[:report]
         transaction.tags = options[:tags] if options[:tags]
         transaction.ignoreschedules = true if options[:ignoreschedules]
 
-        transaction.addtimes :config_retrieval => self.retrieval_duration || 0
-
+        transaction.add_times :config_retrieval => self.retrieval_duration || 0
 
         begin
             transaction.evaluate
@@ -158,7 +159,6 @@ class Puppet::Resource::Catalog < Puppet::SimpleGraph
     ensure
         @applying = false
         cleanup()
-        transaction.cleanup if defined? transaction and transaction
     end
 
     # Are we in the middle of applying the catalog?
@@ -376,12 +376,12 @@ class Puppet::Resource::Catalog < Puppet::SimpleGraph
         # Always create a resource reference, so that it always canonizes how we
         # are referring to them.
         if title
-            ref = Puppet::Resource::Reference.new(type, title).to_s
+            ref = Puppet::Resource.new(type, title).to_s
         else
             # If they didn't provide a title, then we expect the first
             # argument to be of the form 'Class[name]', which our
             # Reference class canonizes for us.
-            ref = Puppet::Resource::Reference.new(nil, type).to_s
+            ref = Puppet::Resource.new(nil, type).to_s
         end
         @resource_table[ref]
     end
@@ -506,12 +506,6 @@ class Puppet::Resource::Catalog < Puppet::SimpleGraph
     private
 
     def cleanup
-        unless @transient_resources.empty?
-            remove_resource(*@transient_resources)
-            @transient_resources.clear
-            @relationship_graph = nil
-        end
-
         # Expire any cached data the resources are keeping.
         expire()
     end

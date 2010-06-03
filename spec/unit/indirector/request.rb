@@ -40,10 +40,6 @@ describe Puppet::Indirector::Request do
             lambda { Puppet::Indirector::Request.new(:ind, :method, :key) }.should_not raise_error(ArgumentError)
         end
 
-        it "should fail if options are specified as anything other than nil or a hash" do
-            lambda { Puppet::Indirector::Request.new(:ind, :method, :key, [:one, :two]) }.should raise_error(ArgumentError)
-        end
-
         it "should use an empty options hash if nil was provided" do
             Puppet::Indirector::Request.new(:ind, :method, :key, nil).options.should == {}
         end
@@ -132,8 +128,8 @@ describe Puppet::Indirector::Request do
                 Puppet::Indirector::Request.new(:ind, :method, "http://host/stuff").port.should == 80
             end
 
-            it "should set the request key to the unescaped unqualified path from the URI" do
-                Puppet::Indirector::Request.new(:ind, :method, "http:///stuff with spaces").key.should == "stuff with spaces"
+            it "should set the request key to the unescaped key part path from the URI" do
+                Puppet::Indirector::Request.new(:ind, :method, "http://host/environment/terminus/stuff with spaces").key.should == "stuff with spaces"
             end
 
             it "should set the :uri attribute to the full URI" do

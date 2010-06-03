@@ -54,7 +54,11 @@ Puppet::Type.type(:ssh_authorized_key).provide(:parsed,
     end
 
     def target
-        @resource.should(:target) || File.expand_path("~%s/.ssh/authorized_keys" % user)
+        begin
+            @resource.should(:target) || File.expand_path("~%s/.ssh/authorized_keys" % user)
+        rescue
+            raise Puppet::Error, "Target not defined and/or specified user does not exist yet"
+        end
     end
 
     def user
@@ -62,36 +66,16 @@ Puppet::Type.type(:ssh_authorized_key).provide(:parsed,
     end
 
     def flush
-        # As path expansion had to be moved in the provider, we cannot generate new file
-        # resources and thus have to chown and chmod here. It smells hackish.
-
-        # Create target's parent directory if nonexistant
-        if target
-            dir = File.dirname(target)
-            if not File.exist? dir
-                Puppet.debug("Creating directory %s which did not exist" % dir)
-                Dir.mkdir(dir, dir_perm)
-            end
+        raise Puppet::Error, "Cannot write SSH authorized keys without user" unless user
+        raise Puppet::Error, "User '#{user}' does not exist"                 unless uid = Puppet::Util.uid(user)
+        unless File.exist?(dir = File.dirname(target))
+            Puppet.debug "Creating #{dir}"
+            Dir.mkdir(dir, dir_perm)
+            File.chown(uid, nil, dir)
         end
-
-        # Generate the file
-        super
-
-        # Ensure correct permissions
-        if target and user
-            uid = Puppet::Util.uid(user)
-
-            if uid
-                File.chown(uid, nil, dir)
-                File.chown(uid, nil, target)
-            else
-                raise Puppet::Error, "Specified user does not exist"
-            end
-        end
-
-        if target
-            File.chmod(file_perm, target)
-        end
+        Puppet::Util::SUIDManager.asuser(user) { super }
+        File.chown(uid, nil, target)
+        File.chmod(file_perm, target)
     end
 
     # parse sshv2 option strings, wich is a comma separated list of

@@ -1,7 +1,6 @@
 require 'puppet/node'
 require 'puppet/resource/catalog'
 require 'puppet/indirector/code'
-require 'puppet/parser/interpreter'
 require 'yaml'
 
 class Puppet::Resource::Catalog::Compiler < Puppet::Indirector::Code
@@ -49,14 +48,7 @@ class Puppet::Resource::Catalog::Compiler < Puppet::Indirector::Code
 
     def initialize
         set_server_facts
-    end
-
-    # Create/return our interpreter.
-    def interpreter
-        unless defined?(@interpreter) and @interpreter
-            @interpreter = create_interpreter
-        end
-        @interpreter
+        setup_database_backend if Puppet[:storeconfigs]
     end
 
     # Is our compiler part of a network, or are we just local?
@@ -74,7 +66,6 @@ class Puppet::Resource::Catalog::Compiler < Puppet::Indirector::Code
 
     # Compile the actual catalog.
     def compile(node)
-        # Ask the interpreter to compile the catalog.
         str = "Compiled catalog for %s" % node.name
         if node.environment
             str += " in environment %s" % node.environment
@@ -85,7 +76,7 @@ class Puppet::Resource::Catalog::Compiler < Puppet::Indirector::Code
 
         benchmark(loglevel, "Compiled catalog for %s" % node.name) do
             begin
-                config = interpreter.compile(node)
+                return Puppet::Parser::Compiler.compile(node)
             rescue Puppet::Error => detail
                 Puppet.err(detail.to_s) if networked?
                 raise
@@ -93,11 +84,6 @@ class Puppet::Resource::Catalog::Compiler < Puppet::Indirector::Code
         end
 
         return config
-    end
-
-    # Create our interpreter object.
-    def create_interpreter
-        return Puppet::Parser::Interpreter.new
     end
 
     # Turn our host name into a node object.
@@ -161,6 +147,11 @@ class Puppet::Resource::Catalog::Compiler < Puppet::Indirector::Code
                 @server_facts["servername"] = host
             end
         end
+    end
+
+    def setup_database_backend
+        raise Puppet::Error, "Rails is missing; cannot store configurations" unless Puppet.features.rails?
+        Puppet::Rails.init
     end
 
     # Mark that the node has checked in. LAK:FIXME this needs to be moved into

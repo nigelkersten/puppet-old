@@ -39,7 +39,7 @@ fail if used with earlier clients.
         vals.each do |klass|
             # lookup the class in the scopes
             if classobj = find_hostclass(klass)
-                klass = classobj.classname
+                klass = classobj.name
             else
                 raise Puppet::ParseError, "Could not find class %s" % klass
             end
@@ -49,7 +49,7 @@ fail if used with earlier clients.
             # The 'obvious' way is just to add an edge in the catalog,
             # but that is considered a containment edge, not a dependency
             # edge, so it usually gets lost on the client.
-            ref = Puppet::Parser::Resource::Reference.new(:type => :class, :title => klass)
+            ref = Puppet::Resource.new(:class, klass)
             resource.set_parameter(:require, [resource[:require]].flatten.compact << ref)
         end
     end

@@ -231,11 +231,6 @@ class TestFile < Test::Unit::TestCase
                 assert_nothing_raised() {
                     file[:owner] = name
                 }
-                changes = []
-                assert_nothing_raised() {
-                    changes << file.evaluate
-                }
-                assert(changes.length > 0)
                 assert_apply(file)
                 currentvalue = file.retrieve
                 assert(file.insync?(currentvalue))
@@ -311,7 +306,6 @@ class TestFile < Test::Unit::TestCase
             assert_events([:file_created], file)
             assert_events([], file)
             assert(FileTest.file?(path), "File does not exist")
-            assert(file.insync?(file.retrieve))
             @@tmpfiles.push path
         }
     end
@@ -331,7 +325,6 @@ class TestFile < Test::Unit::TestCase
                 [path])
             assert_events([:directory_created], file)
             assert_events([], file)
-            assert(file.insync?(file.retrieve))
             assert(FileTest.directory?(path))
             @@tmpfiles.push path
         }
@@ -345,10 +338,8 @@ class TestFile < Test::Unit::TestCase
             assert_nothing_raised() {
                 file[:mode] = mode
             }
-            assert_events([:file_changed], file)
+            assert_events([:mode_changed], file)
             assert_events([], file)
-
-            assert(file.insync?(file.retrieve))
 
             assert_nothing_raised() {
                 file.delete(:mode)
@@ -387,69 +378,6 @@ class TestFile < Test::Unit::TestCase
         }
     end
 
-    def test_recurse?
-        file = Puppet::Type.type(:file).new :path => tempfile
-
-        # Make sure we default to false
-        assert(! file.recurse?, "Recurse defaulted to true")
-
-        [true, "true", 10, "inf", "remote"].each do |value|
-            file[:recurse] = value
-            assert(file.recurse?, "%s did not cause recursion" % value)
-        end
-
-        [false, "false", 0].each do |value|
-            file[:recurse] = value
-            assert(! file.recurse?, "%s caused recursion" % value)
-        end
-    end
-
-    def test_recursion
-        basedir = tempfile()
-        subdir = File.join(basedir, "subdir")
-        tmpfile = File.join(basedir,"testing")
-        FileUtils.mkdir_p(subdir)
-
-        dir = nil
-        [true, "true", "inf", 50].each do |value|
-            assert_nothing_raised {
-                dir = Puppet::Type.type(:file).new(
-                    :path => basedir,
-                    :recurse => value,
-                    :check => %w{owner mode group}
-                )
-            }
-            config = mk_catalog dir
-            transaction = Puppet::Transaction.new(config)
-
-            children = nil
-
-            assert_nothing_raised {
-                children = transaction.eval_generate(dir)
-            }
-
-            assert_equal([subdir], children.collect {|c| c.title },
-                "Incorrect generated children")
-
-            # Remove our subdir resource,
-            subdir_resource = config.resource(:file, subdir)
-            config.remove_resource(subdir_resource)
-
-            # Create the test file
-            File.open(tmpfile, "w") { |f| f.puts "yayness" }
-
-            assert_nothing_raised {
-                children = transaction.eval_generate(dir)
-            }
-
-            # And make sure we get both resources back.
-            assert_equal([subdir, tmpfile].sort, children.collect {|c| c.title }.sort,
-                "Incorrect generated children when recurse == %s" % value.inspect)
-
-            File.unlink(tmpfile)
-        end
-    end
-
     def test_filetype_retrieval
         file = nil
 
@@ -459,10 +387,6 @@ class TestFile < Test::Unit::TestCase
                 :name => tmpdir(),
                 :check => :type
             )
-        }
-
-        assert_nothing_raised {
-            file.evaluate
         }
 
         assert_equal("directory", file.property(:type).retrieve)
@@ -480,15 +404,6 @@ class TestFile < Test::Unit::TestCase
         assert_apply(file)
 
         assert_equal("file", file.property(:type).retrieve)
-
-        file[:type] = "directory"
-
-        currentvalues = {}
-        assert_nothing_raised { currentvalues = file.retrieve }
-
-        # The 'retrieve' method sets @should to @is, so they're never
-        # out of sync.  It's a read-only class.
-        assert(file.insync?(currentvalues))
     end
 
     def test_path
@@ -585,7 +500,7 @@ class TestFile < Test::Unit::TestCase
 
         file.retrieve
 
-        assert_events([:file_changed], file)
+        assert_events([:content_changed], file)
         file.retrieve
         assert_events([], file)
     end
@@ -676,45 +591,6 @@ class TestFile < Test::Unit::TestCase
 
         assert_apply(file)
         assert_equal("%o" % 0755, "%o" % (File.stat(path).mode & 007777))
-    end
-
-    def test_backupmodes
-        File.umask(0022)
-
-        file = tempfile()
-        newfile = tempfile()
-
-        File.open(file, "w", 0411) { |f| f.puts "yayness" }
-
-        obj = Puppet::Type.type(:file).new(
-            :path => file, :content => "rahness\n", :backup => ".puppet-bak"
-        )
-        catalog = mk_catalog(obj)
-        catalog.apply
-
-        backupfile = file + obj[:backup]
-        @@tmpfiles << backupfile
-        assert(FileTest.exists?(backupfile),
-            "Backup file %s does not exist" % backupfile)
-
-        assert_equal(0411, filemode(backupfile),
-            "File mode is wrong for backupfile")
-
-        name = "bucket"
-        bpath = tempfile()
-        Dir.mkdir(bpath)
-        bucket = Puppet::Type.type(:filebucket).new(:title => name, :path => bpath)
-        catalog.add_resource(bucket)
-
-        obj[:backup] = name
-        obj[:content] = "New content"
-        catalog.finalize
-        catalog.apply
-
-        md5 = "18cc17fa3047fcc691fdf49c0a7f539a"
-        dir, file, pathfile = Puppet::Network::Handler.filebucket.paths(bpath, md5)
-
-        assert_equal(0440, filemode(file))
     end
 
     def test_replacefilewithlink
@@ -964,39 +840,9 @@ class TestFile < Test::Unit::TestCase
     end
     end
 
-    # #567
-    def test_missing_files_are_in_sync
-        file = tempfile
-        obj = Puppet::Type.newfile(:path => file, :mode => 0755)
-
-        changes = obj.evaluate
-        assert(changes.empty?, "Missing file with no ensure resulted in changes")
-    end
-
     def test_root_dir_is_named_correctly
         obj = Puppet::Type.newfile(:path => '/', :mode => 0755)
         assert_equal("/", obj.title, "/ directory was changed to empty string")
     end
 
-    # #1010 and #1037 -- write should fail if the written checksum does not
-    # match the file we thought we were writing.
-    def test_write_validates_checksum
-        file = tempfile
-        inst = Puppet::Type.newfile(:path => file, :content => "something")
-
-        tmpfile = file + ".puppettmp"
-
-        wh = mock 'writehandle', :print => nil
-        rh = mock 'readhandle'
-        rh.expects(:read).with(4096).times(2).returns("other").then.returns(nil)
-        File.expects(:open).with { |*args| args[0] == tmpfile and args[1] != "r" }.yields(wh)
-        File.expects(:open).with { |*args| args[0] == tmpfile and args[1] == "r" }.yields(rh)
-
-        File.stubs(:rename)
-        FileTest.stubs(:exist?).returns(true)
-        FileTest.stubs(:file?).returns(true)
-
-        inst.expects(:fail)
-        inst.write("something", :whatever)
-    end
 end

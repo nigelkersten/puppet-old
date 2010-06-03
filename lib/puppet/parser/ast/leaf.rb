@@ -11,14 +11,14 @@ class Puppet::Parser::AST
         end
 
         # evaluate ourselves, and match
-        def evaluate_match(value, scope, options = {})
+        def evaluate_match(value, scope)
             obj = self.safeevaluate(scope)
-            if ! options[:sensitive] && obj.respond_to?(:downcase)
-                obj = obj.downcase
-            end
+
+            obj   = obj.downcase   if obj.respond_to?(:downcase)
+            value = value.downcase if value.respond_to?(:downcase)
+
             # "" == undef for case/selector/if
-            return true if obj == "" and value == :undef
-            obj == value
+            obj == value or (obj == "" and value == :undef)
         end
 
         def match(value)
@@ -52,10 +52,8 @@ class Puppet::Parser::AST
 
     # The base string class.
     class String < AST::Leaf
-        # Interpolate the string looking for variables, and then return
-        # the result.
         def evaluate(scope)
-            return scope.strinterp(@value, file, line)
+            @value
         end
 
         def to_s
@@ -71,6 +69,16 @@ class Puppet::Parser::AST
 
         def to_s
             "\"#{@value}\""
+        end
+    end
+
+    class Concat < AST::Leaf
+        def evaluate(scope)
+            @value.collect { |x| x.evaluate(scope) }.join
+        end
+
+        def to_s
+            "concat(#{@value.join(',')})"
         end
     end
 

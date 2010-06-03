@@ -41,17 +41,15 @@ class Puppet::Parser::Collector
             # overrided those resources
             objects.each do |res|
                 unless @collected.include?(res.ref)
-                    res = Puppet::Parser::Resource.new(
-                        :type => res.type,
-                        :title => res.title,
-                        :params => overrides[:params],
+                    newres = Puppet::Parser::Resource.new(res.type, res.title,
+                        :parameters => overrides[:parameters],
                         :file => overrides[:file],
                         :line => overrides[:line],
                         :source => overrides[:source],
                         :scope => overrides[:scope]
                     )
 
-                    scope.compiler.add_override(res)
+                    scope.compiler.add_override(newres)
                 end
             end
         end
@@ -75,7 +73,7 @@ class Puppet::Parser::Collector
         @collected = {}
 
         # Canonize the type
-        @type = Puppet::Resource::Reference.new(type, "whatever").type
+        @type = Puppet::Resource.new(type, "whatever").type
         @equery = equery
         @vquery = vquery
 
@@ -85,7 +83,7 @@ class Puppet::Parser::Collector
 
     # add a resource override to the soon to be exported/realized resources
     def add_override(hash)
-        unless hash[:params]
+        unless hash[:parameters]
             raise ArgumentError, "Exported resource try to override without parameters"
         end
 

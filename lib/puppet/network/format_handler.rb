@@ -51,6 +51,13 @@ module Puppet::Network::FormatHandler
         @formats[name.to_s.downcase.intern]
     end
 
+    def self.format_by_extension(ext)
+        @formats.each do |name, format|
+            return format if format.extension == ext
+        end
+        return nil
+    end
+
     # Provide a list of all formats.
     def self.formats
         @formats.keys
@@ -142,7 +149,7 @@ module Puppet::Network::FormatHandler
                 list.delete(preferred_format)
                 list.unshift(preferred_format)
             else
-                Puppet.warning "Value of 'preferred_serialization_format' (#{preferred_format}) is invalid for #{friendly_name}, using default (#{list.first})"
+                Puppet.debug "Value of 'preferred_serialization_format' (#{preferred_format}) is invalid for #{friendly_name}, using default (#{list.first})"
             end
             list
         end

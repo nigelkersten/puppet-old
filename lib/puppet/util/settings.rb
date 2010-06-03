@@ -1,8 +1,6 @@
 require 'puppet'
 require 'sync'
-require 'puppet/transportable'
 require 'getoptlong'
-
 require 'puppet/external/event-loop'
 require 'puppet/util/cacher'
 require 'puppet/util/loadedfile'
@@ -147,6 +145,7 @@ class Puppet::Util::Settings
         @cache.clear
         value = munge_value(value) if value
         str = opt.sub(/^--/,'')
+
         bool = true
         newstr = str.sub(/^no-/, '')
         if newstr != str
@@ -155,8 +154,10 @@ class Puppet::Util::Settings
         end
         str = str.intern
 
-        if value == "" or value.nil?
-            value = bool
+        if @config[str].is_a?(Puppet::Util::Settings::BooleanSetting)
+            if value == "" or value.nil?
+                value = bool
+            end
         end
 
         set_value(str, value, :cli)
@@ -567,8 +568,6 @@ class Puppet::Util::Settings
     end
 
     # Convert the settings we manage into a catalog full of resources that model those settings.
-    # We currently have to go through Trans{Object,Bucket} instances,
-    # because this hasn't been ported yet.
     def to_catalog(*sections)
         sections = nil if sections.empty?
 
@@ -813,14 +812,14 @@ Generated on #{Time.now}.
             next unless sections.nil? or sections.include?(setting.section)
 
             if user = setting.owner and user != "root" and catalog.resource(:user, user).nil?
-                resource = Puppet::Resource.new(:user, user, :ensure => :present)
+                resource = Puppet::Resource.new(:user, user, :parameters => {:ensure => :present})
                 if self[:group]
                     resource[:gid] = self[:group]
                 end
                 catalog.add_resource resource
             end
             if group = setting.group and ! %w{root wheel}.include?(group) and catalog.resource(:group, group).nil?
-                catalog.add_resource Puppet::Resource.new(:group, group, :ensure => :present)
+                catalog.add_resource Puppet::Resource.new(:group, group, :parameters => {:ensure => :present})
             end
         end
     end

@@ -1,8 +1,8 @@
 require 'puppet'
 require 'puppet/application'
-require 'puppet/network/client'
+require 'puppet/file_bucket/dipper'
 
-Puppet::Application.new(:filebucket) do
+class Puppet::Application::Filebucket < Puppet::Application
 
     should_not_parse_config
 
@@ -12,18 +12,23 @@ Puppet::Application.new(:filebucket) do
     option("--remote","-r")
     option("--verbose","-v")
 
-    dispatch do
-        ARGV.shift
+    attr :args
+
+    def run_command
+        @args = command_line.args
+        command = args.shift
+        return send(command) if %w[get backup restore].include? command
+        help
     end
 
-    command(:get) do
-        md5 = ARGV.shift
+    def get
+        md5 = args.shift
         out = @client.getfile(md5)
         print out
     end
 
-    command(:backup) do
-        ARGV.each do |file|
+    def backup
+        args.each do |file|
             unless FileTest.exists?(file)
                 $stderr.puts "%s: no such file" % file
                 next
@@ -37,13 +42,13 @@ Puppet::Application.new(:filebucket) do
         end
     end
 
-    command(:restore) do
-        file = ARGV.shift
-        md5 = ARGV.shift
+    def restore
+        file = args.shift
+        md5 = args.shift
         @client.restore(file, md5)
     end
 
-    setup do
+    def setup
         Puppet::Log.newdestination(:console)
 
         @client = nil
@@ -70,10 +75,9 @@ Puppet::Application.new(:filebucket) do
         begin
             if options[:local] or options[:bucket]
                 path = options[:bucket] || Puppet[:bucketdir]
-                @client = Puppet::Network::Client.dipper.new(:Path => path)
+                @client = Puppet::FileBucket::Dipper.new(:Path => path)
             else
-                require 'puppet/network/handler'
-                @client = Puppet::Network::Client.dipper.new(:Server => Puppet[:server])
+                @client = Puppet::FileBucket::Dipper.new(:Server => Puppet[:server])
             end
         rescue => detail
             $stderr.puts detail
@@ -85,3 +89,4 @@ Puppet::Application.new(:filebucket) do
     end
 
 end
+

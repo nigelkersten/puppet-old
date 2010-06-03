@@ -3,14 +3,14 @@
 require File.dirname(__FILE__) + '/../../lib/puppettest'
 
 require 'puppettest'
-require 'puppet/network/client/resource'
+require 'puppet/file_bucket/dipper'
 
 class TestDipperClient < Test::Unit::TestCase
     include PuppetTest::ServerTest
 
     def setup
         super
-        @dipper = Puppet::Network::Client.dipper.new(:Path => tempfile)
+        @dipper = Puppet::FileBucket::Dipper.new(:Path => tempfile)
     end
 
     # Make sure we can create a new file with 'restore'.

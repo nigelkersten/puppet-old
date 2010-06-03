@@ -1,6 +1,5 @@
 require 'openssl'
 require 'puppet'
-require 'puppet/parser/interpreter'
 require 'puppet/sslcertificates'
 require 'xmlrpc/server'
 require 'yaml'
@@ -44,8 +43,6 @@ class Puppet::Network::Handler
                 @ca = nil
             end
 
-            Puppet.debug("Creating interpreter")
-
             # This is only used by the cfengine module, or if --loadclasses was
             # specified in +puppet+.
             if hash.include?(:Classes)
@@ -66,7 +63,7 @@ class Puppet::Network::Handler
 
             case format
             when "yaml"
-                return CGI.escape(catalog.extract.to_yaml(:UseBlock => true))
+                return CGI.escape(catalog.extract.to_yaml)
             when "marshal"
                 return CGI.escape(Marshal.dump(catalog.extract))
             else

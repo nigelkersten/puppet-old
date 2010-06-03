@@ -15,19 +15,22 @@ module PuppetTest::ResourceTesting
         args[:source] ||= "source"
         args[:scope] ||= mkscope
 
-        {:type => "resource", :title => "testing",
-            :source => "source", :scope => "scope"}.each do |param, value|
-                args[param] ||= value
+        type = args[:type] || "resource"
+        title = args[:title] || "testing"
+        args.delete(:type)
+        args.delete(:title)
+        {:source => "source", :scope => "scope"}.each do |param, value|
+            args[param] ||= value
         end
 
-        params = args[:params] || {:one => "yay", :three => "rah"}
-        if args[:params] == :none
-            args.delete(:params)
+        params = args[:parameters] || {:one => "yay", :three => "rah"}
+        if args[:parameters] == :none
+            args.delete(:parameters)
         else
-            args[:params] = paramify args[:source], params
+            args[:parameters] = paramify args[:source], params
         end
 
-        Parser::Resource.new(args)
+        Parser::Resource.new(type, title, args)
     end
 
     def param(name, value, source)

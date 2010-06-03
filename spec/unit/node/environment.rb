@@ -43,6 +43,43 @@ describe Puppet::Node::Environment do
         Puppet::Node::Environment.new(:one).to_s.should == "one"
     end
 
+    it "should just return any provided environment if an environment is provided as the name" do
+        one = Puppet::Node::Environment.new(:one)
+        Puppet::Node::Environment.new(one).should equal(one)
+    end
+
+    describe "when managing known resource types" do
+        before do
+            @env = Puppet::Node::Environment.new("dev")
+            @collection = Puppet::Resource::TypeCollection.new(@env)
+            @collection.stubs(:perform_initial_import)
+        end
+
+        it "should create a resource type collection if none exists" do
+            Puppet::Resource::TypeCollection.expects(:new).with(@env).returns @collection
+            @env.known_resource_types.should equal(@collection)
+        end
+
+        it "should reuse any existing resource type collection" do
+            @env.known_resource_types.should equal(@env.known_resource_types)
+        end
+        
+        it "should perform the initial import when creating a new collection" do
+            @collection.expects(:perform_initial_import)
+            Puppet::Resource::TypeCollection.expects(:new).returns @collection
+
+            @env.known_resource_types
+        end
+
+        it "should create and return a new collection rather than returning a stale collection" do
+            @env.known_resource_types.expects(:stale?).returns true
+
+            Puppet::Resource::TypeCollection.expects(:new).returns @collection
+
+            @env.known_resource_types.should equal(@collection)
+        end
+    end
+
     [:modulepath, :manifestdir].each do |setting|
         it "should validate the #{setting} directories" do
             path = %w{/one /two}.join(File::PATH_SEPARATOR)
@@ -157,7 +194,7 @@ describe Puppet::Node::Environment do
 
             it "should ignore invalid modules" do
                 env = Puppet::Node::Environment.new("testing")
-                env.expects(:modulepath).returns( %w{/a} )
+                env.stubs(:modulepath).returns %w{/a}
                 Dir.expects(:entries).with("/a").returns %w{foo bar}
 
                 Puppet::Module.expects(:new).with { |name, env| name == "foo" }.returns mock("foomod", :name => "foo")
@@ -182,6 +219,30 @@ describe Puppet::Node::Environment do
                 env.modules
                 env.modules
             end
+        end
+    end
+
+    describe Puppet::Node::Environment::Helper do
+        before do
+            @helper = Object.new
+            @helper.extend(Puppet::Node::Environment::Helper)
+        end
+
+        it "should be able to set and retrieve the environment" do
+            @helper.environment = :foo
+            @helper.environment.name.should == :foo
+        end
+
+        it "should accept an environment directly" do
+            env = Puppet::Node::Environment.new :foo
+            @helper.environment = env
+            @helper.environment.name.should == :foo
+        end
+
+        it "should accept an environment as a string" do
+            env = Puppet::Node::Environment.new "foo"
+            @helper.environment = env
+            @helper.environment.name.should == :foo
         end
     end
 end

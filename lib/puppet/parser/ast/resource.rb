@@ -8,13 +8,13 @@ class Resource < AST::ResourceReference
     associates_doc
 
     attr_accessor :title, :type, :exported, :virtual
-    attr_reader :params
+    attr_reader :parameters
 
     # Does not actually return an object; instead sets an object
     # in the current scope.
     def evaluate(scope)
         # Evaluate all of the specified params.
-        paramobjects = @params.collect { |param|
+        paramobjects = parameters.collect { |param|
             param.safeevaluate(scope)
         }
 
@@ -24,8 +24,6 @@ class Resource < AST::ResourceReference
         unless resource_titles.is_a?(Array)
             resource_titles = [resource_titles]
         end
-
-        resource_type = qualified_type(scope)
 
         # We want virtual to be true if exported is true.  We can't
         # just set :virtual => self.virtual in the initialization,
@@ -39,16 +37,15 @@ class Resource < AST::ResourceReference
         # many times.
         resource_titles.flatten.collect { |resource_title|
             exceptwrap :type => Puppet::ParseError do
-                resource = Puppet::Parser::Resource.new(
-                    :type => resource_type,
-                    :title => resource_title,
-                    :params => paramobjects,
+                resource = Puppet::Parser::Resource.new(type, resource_title,
+                    :parameters => paramobjects,
                     :file => self.file,
                     :line => self.line,
                     :exported => self.exported,
                     :virtual => virt,
                     :source => scope.source,
-                    :scope => scope
+                    :scope => scope,
+                    :strict => true
                 )
 
                 # And then store the resource in the compiler.
@@ -61,11 +58,11 @@ class Resource < AST::ResourceReference
     end
 
     # Set the parameters for our object.
-    def params=(params)
+    def parameters=(params)
         if params.is_a?(AST::ASTArray)
-            @params = params
+            @parameters = params
         else
-            @params = AST::ASTArray.new(
+            @parameters = AST::ASTArray.new(
                 :line => params.line,
                 :file => params.file,
                 :children => [params]

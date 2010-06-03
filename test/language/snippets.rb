@@ -3,7 +3,6 @@
 require File.dirname(__FILE__) + '/../lib/puppettest'
 
 require 'puppet'
-require 'puppet/parser/interpreter'
 require 'puppet/parser/parser'
 require 'puppet/network/client'
 require 'puppet/network/handler'
@@ -75,10 +74,6 @@ class TestSnippets < Test::Unit::TestCase
     end
 
     def ast2scope(ast)
-        interp = Puppet::Parser::Interpreter.new(
-            :ast => ast,
-            :client => client()
-        )
         scope = Puppet::Parser::Scope.new()
         ast.evaluate(scope)
 
@@ -128,7 +123,7 @@ class TestSnippets < Test::Unit::TestCase
     end
 
     def randeach(type)
-        [:properties, :metaparams, :params].collect { |thing|
+        [:properties, :metaparams, :parameters].collect { |thing|
             randthing(thing,type)
         }
     end
@@ -211,7 +206,7 @@ class TestSnippets < Test::Unit::TestCase
 
         assert_nothing_raised {
             assert_equal(
-                "//testing/Mytype[componentname]/File[/tmp/classtest]",
+                "//Testing/Mytype[componentname]/File[/tmp/classtest]",
                 file.path)
         }
     end

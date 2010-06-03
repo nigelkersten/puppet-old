@@ -8,6 +8,12 @@ require File.dirname(__FILE__) + '/../../../spec_helper'
 require 'puppet/indirector/catalog/compiler'
 
 describe Puppet::Resource::Catalog::Compiler do
+    before do
+        Puppet::Rails.stubs(:init)
+        Facter.stubs(:to_hash).returns({})
+        Facter.stubs(:value).returns(Facter::Util::Fact.new("something"))
+    end
+
     describe "when initializing" do
         before do
             Puppet.expects(:version).returns(1)
@@ -35,39 +41,35 @@ describe Puppet::Resource::Catalog::Compiler do
             compiler = Puppet::Resource::Catalog::Compiler.new
             compiler.should respond_to(:networked?)
         end
-    end
 
-    describe "when creating the interpreter" do
-        before do
-            # This gets pretty annoying on a plane where we have no IP address
-            Facter.stubs(:value).returns("whatever")
-            @compiler = Puppet::Resource::Catalog::Compiler.new
-        end
+        describe "and storeconfigs is enabled" do
+            before do
+                Puppet.settings.expects(:value).with(:storeconfigs).returns true
+            end
 
-        it "should not create the interpreter until it is asked for the first time" do
-            interp = mock 'interp'
-            Puppet::Parser::Interpreter.expects(:new).with().returns(interp)
-            @compiler.interpreter.should equal(interp)
-        end
+            it "should initialize Rails if it is available" do
+                Puppet.features.expects(:rails?).returns true
+                Puppet::Rails.expects(:init)
+                Puppet::Resource::Catalog::Compiler.new
+            end
 
-        it "should use the same interpreter for all compiles" do
-            interp = mock 'interp'
-            Puppet::Parser::Interpreter.expects(:new).with().returns(interp)
-            @compiler.interpreter.should equal(interp)
-            @compiler.interpreter.should equal(interp)
+            it "should fail if Rails is unavailable" do
+                Puppet.features.expects(:rails?).returns false
+                Puppet::Rails.expects(:init).never
+                lambda { Puppet::Resource::Catalog::Compiler.new }.should raise_error(Puppet::Error)
+            end
         end
     end
 
     describe "when finding catalogs" do
         before do
             Facter.stubs(:value).returns("whatever")
-            env = stub 'environment', :name => "yay", :modulepath => []
-            Puppet::Node::Environment.stubs(:new).returns(env)
 
             @compiler = Puppet::Resource::Catalog::Compiler.new
             @name = "me"
             @node = Puppet::Node.new @name
             @node.stubs(:merge)
+            Puppet::Node.stubs(:find).returns @node
             @request = stub 'request', :key => "does not matter", :node => @name, :options => {}
         end
 
@@ -103,17 +105,17 @@ describe Puppet::Resource::Catalog::Compiler do
             proc { @compiler.find(@request) }.should raise_error(Puppet::Error)
         end
 
-        it "should pass the found node to the interpreter for compiling" do
+        it "should pass the found node to the compiler for compiling" do
             Puppet::Node.expects(:find).with(@name).returns(@node)
             config = mock 'config'
-            @compiler.interpreter.expects(:compile).with(@node)
+            Puppet::Parser::Compiler.expects(:compile).with(@node)
             @compiler.find(@request)
         end
 
         it "should extract and save any facts from the request" do
             Puppet::Node.expects(:find).with(@name).returns @node
             @compiler.expects(:extract_facts_from_request).with(@request)
-            @compiler.interpreter.stubs(:compile)
+            Puppet::Parser::Compiler.stubs(:compile)
             @compiler.find(@request)
         end
 
@@ -122,7 +124,7 @@ describe Puppet::Resource::Catalog::Compiler do
             config = mock 'config'
             result = mock 'result'
 
-            @compiler.interpreter.expects(:compile).with(@node).returns(result)
+            Puppet::Parser::Compiler.expects(:compile).returns result
             @compiler.find(@request).should equal(result)
         end
 
@@ -132,13 +134,14 @@ describe Puppet::Resource::Catalog::Compiler do
             @compiler.expects(:benchmark).with do |level, message|
                 level == :notice and message =~ /^Compiled catalog/
             end
-            @compiler.interpreter.stubs(:compile).with(@node)
+            Puppet::Parser::Compiler.stubs(:compile)
             @compiler.find(@request)
         end
     end
 
     describe "when extracting facts from the request" do
         before do
+            Facter.stubs(:value).returns "something"
             @compiler = Puppet::Resource::Catalog::Compiler.new
             @request = stub 'request', :options => {}
 
@@ -227,6 +230,7 @@ describe Puppet::Resource::Catalog::Compiler do
 
     describe "when filtering resources" do
         before :each do
+            Facter.stubs(:value)
             @compiler = Puppet::Resource::Catalog::Compiler.new
             @catalog = stub_everything 'catalog'
             @catalog.stubs(:respond_to?).with(:filter).returns(true)

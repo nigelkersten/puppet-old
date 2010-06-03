@@ -7,9 +7,60 @@ describe Puppet::Parser do
     ast = Puppet::Parser::AST
 
     before :each do
-        @loaded_code = Puppet::Parser::LoadedCode.new
-        @parser = Puppet::Parser::Parser.new :environment => "development", :loaded_code => @loaded_code
+        @known_resource_types = Puppet::Resource::TypeCollection.new("development")
+        @parser = Puppet::Parser::Parser.new "development"
+        @parser.stubs(:known_resource_types).returns @known_resource_types
         @true_ast = Puppet::Parser::AST::Boolean.new :value => true
+    end
+
+    it "should require an environment at initialization" do
+        lambda { Puppet::Parser::Parser.new }.should raise_error(ArgumentError)
+    end
+
+    it "should set the environment" do
+        env = Puppet::Node::Environment.new
+        Puppet::Parser::Parser.new(env).environment.should == env
+    end
+
+    it "should convert the environment into an environment instance if a string is provided" do
+        env = Puppet::Node::Environment.new("testing")
+        Puppet::Parser::Parser.new("testing").environment.should == env
+    end
+
+    it "should be able to look up the environment-specific resource type collection" do
+        rtc = Puppet::Node::Environment.new("development").known_resource_types
+        parser = Puppet::Parser::Parser.new "development"
+        parser.known_resource_types.should equal(rtc)
+    end
+    
+    it "should delegate importing to the known resource type loader" do
+        parser = Puppet::Parser::Parser.new "development"
+        parser.known_resource_types.loader.expects(:import).with("newfile", "current_file")
+        parser.lexer.expects(:file).returns "current_file"
+        parser.import("newfile")
+    end
+
+    describe "when parsing files" do
+        before do
+            FileTest.stubs(:exist?).returns true
+            File.stubs(:read).returns ""
+            @parser.stubs(:watch_file)
+        end
+
+        it "should treat files ending in 'rb' as ruby files" do
+            @parser.expects(:parse_ruby_file)
+            @parser.file = "/my/file.rb"
+            @parser.parse
+        end
+
+        describe "in ruby" do
+            it "should use the ruby interpreter to load the file" do
+                @parser.file = "/my/file.rb"
+                @parser.expects(:require).with "/my/file.rb"
+
+                @parser.parse_ruby_file
+            end
+        end
     end
 
     describe "when parsing append operator" do
@@ -110,7 +161,7 @@ describe Puppet::Parser do
 
         it "should create an ast::ResourceOverride" do
             ast::ResourceOverride.expects(:new).with { |arg|
-                arg[:line]==1 and arg[:object].is_a?(ast::ResourceReference) and arg[:params].is_a?(ast::ResourceParam)
+                arg[:line]==1 and arg[:object].is_a?(ast::ResourceReference) and arg[:parameters].is_a?(ast::ResourceParam)
             }
             @parser.parse('Resource["title1","title2"] { param => value }')
         end
@@ -252,8 +303,8 @@ describe Puppet::Parser do
     end
 
     describe "when retrieving a specific node" do
-        it "should delegate to the loaded_code node" do
-            @loaded_code.expects(:node).with("node")
+        it "should delegate to the known_resource_types node" do
+            @known_resource_types.expects(:node).with("node")
 
             @parser.node("node")
         end
@@ -261,7 +312,7 @@ describe Puppet::Parser do
 
     describe "when retrieving a specific class" do
         it "should delegate to the loaded code" do
-            @loaded_code.expects(:hostclass).with("class")
+            @known_resource_types.expects(:hostclass).with("class")
 
             @parser.hostclass("class")
         end
@@ -269,117 +320,87 @@ describe Puppet::Parser do
 
     describe "when retrieving a specific definitions" do
         it "should delegate to the loaded code" do
-            @loaded_code.expects(:definition).with("define")
+            @known_resource_types.expects(:definition).with("define")
 
             @parser.definition("define")
         end
     end
 
     describe "when determining the configuration version" do
-        it "should default to the current time" do
-            time = Time.now
-
-            Time.stubs(:now).returns time
-            @parser.version.should == time.to_i
+        it "should determine it from the resource type collection" do
+            @parser.known_resource_types.expects(:version).returns "foo"
+            @parser.version.should == "foo"
         end
-
-        it "should use the output of the config_version setting if one is provided" do
-            Puppet.settings.stubs(:[]).with(:config_version).returns("/my/foo")
-
-            Puppet::Util.expects(:execute).with(["/my/foo"]).returns "output\n"
-            @parser.version.should == "output"
-        end
-
-        it "should raise a puppet parser error if executing config_version fails" do
-            Puppet.settings.stubs(:[]).with(:config_version).returns("test")
-            Puppet::Util.expects(:execute).raises(Puppet::ExecutionFailure.new("msg"))
-
-            lambda { @parser.version }.should raise_error(Puppet::ParseError)
-        end
-
     end
 
-    describe Puppet::Parser,"when looking up definitions" do
-        it "should check for them by name" do
-            @parser.stubs(:find_or_load).with("namespace","name",:definition).returns(:this_value)
+    describe "when looking up definitions" do
+        it "should use the known resource types to check for them by name" do
+            @parser.known_resource_types.stubs(:find_or_load).with("namespace","name",:definition).returns(:this_value)
             @parser.find_definition("namespace","name").should == :this_value
         end
     end
 
-    describe Puppet::Parser,"when looking up hostclasses" do
-        it "should check for them by name" do
-            @parser.stubs(:find_or_load).with("namespace","name",:hostclass).returns(:this_value)
+    describe "when looking up hostclasses" do
+        it "should use the known resource types to check for them by name" do
+            @parser.known_resource_types.stubs(:find_or_load).with("namespace","name",:hostclass).returns(:this_value)
             @parser.find_hostclass("namespace","name").should == :this_value
         end
     end
 
-    describe Puppet::Parser,"when looking up names" do
+    describe "when parsing classes" do
         before :each do
-            @loaded_code = mock 'loaded code'
-            @loaded_code.stubs(:find_my_type).with('loaded_namespace',  'loaded_name').returns(true)
-            @loaded_code.stubs(:find_my_type).with('bogus_namespace',   'bogus_name' ).returns(false)
-            @parser = Puppet::Parser::Parser.new :environment => "development",:loaded_code => @loaded_code
+            @krt = Puppet::Resource::TypeCollection.new("development")
+            @parser = Puppet::Parser::Parser.new "development"
+            @parser.stubs(:known_resource_types).returns @krt
         end
 
-        describe "that are already loaded" do
-            it "should not try to load anything" do
-                @parser.expects(:load).never
-                @parser.find_or_load("loaded_namespace","loaded_name",:my_type)
-            end
-            it "should return true" do
-                @parser.find_or_load("loaded_namespace","loaded_name",:my_type).should == true
-            end
+        it "should create new classes" do
+            @parser.parse("class foobar {}")
+            @krt.hostclass("foobar").should be_instance_of(Puppet::Resource::Type)
         end
 
-        describe "that aren't already loaded" do
-            it "should first attempt to load them with the all lowercase fully qualified name" do
-                @loaded_code.stubs(:find_my_type).with("foo_namespace","foo_name").returns(false,true,true)
-                @parser.expects(:load).with("foo_namespace::foo_name").returns(true).then.raises(Exception)
-                @parser.find_or_load("Foo_namespace","Foo_name",:my_type).should == true
-            end
+        it "should correctly set the parent class when one is provided" do
+            @parser.parse("class foobar inherits yayness {}")
+            @krt.hostclass("foobar").parent.should == "yayness"
+        end
 
-            it "should next attempt to load them with the all lowercase namespace" do
-                @loaded_code.stubs(:find_my_type).with("foo_namespace","foo_name").returns(false,false,true,true)
-                @parser.expects(:load).with("foo_namespace::foo_name").returns(false).then.raises(Exception)
-                @parser.expects(:load).with("foo_namespace"          ).returns(true ).then.raises(Exception)
-                @parser.find_or_load("Foo_namespace","Foo_name",:my_type).should == true
-            end
+        it "should correctly set the parent class for multiple classes at a time" do
+            @parser.parse("class foobar inherits yayness {}\nclass boo inherits bar {}")
+            @krt.hostclass("foobar").parent.should == "yayness"
+            @krt.hostclass("boo").parent.should == "bar"
+        end
 
-            it "should finally attempt to load them with the all lowercase unqualified name" do
-                @loaded_code.stubs(:find_my_type).with("foo_namespace","foo_name").returns(false,false,false,true,true)
-                @parser.expects(:load).with("foo_namespace::foo_name").returns(false).then.raises(Exception)
-                @parser.expects(:load).with("foo_namespace"          ).returns(false).then.raises(Exception)
-                @parser.expects(:load).with(               "foo_name").returns(true ).then.raises(Exception)
-                @parser.find_or_load("Foo_namespace","Foo_name",:my_type).should == true
-            end
+        it "should define the code when some is provided" do
+            @parser.parse("class foobar { $var = val }")
+            @krt.hostclass("foobar").code.should_not be_nil
+        end
 
-            it "should return false if the name isn't found" do
-                @parser.stubs(:load).returns(false)
-                @parser.find_or_load("Bogus_namespace","Bogus_name",:my_type).should == false
-            end
-
-            it "should directly look for fully qualified classes" do
-                @loaded_code.stubs(:find_hostclass).with("foo_namespace","::foo_name").returns(false, true)
-                @parser.expects(:load).with("foo_name").returns true
-                @parser.find_or_load("foo_namespace","::foo_name",:hostclass)
-            end
+        it "should define parameters when provided" do
+            @parser.parse("class foobar($biz,$baz) {}")
+            @krt.hostclass("foobar").arguments.should == {"biz" => nil, "baz" => nil}
         end
     end
 
-    describe Puppet::Parser,"when loading classnames" do
+    describe "when parsing resources" do
         before :each do
-            @loaded_code = mock 'loaded code'
-            @parser = Puppet::Parser::Parser.new :environment => "development",:loaded_code => @loaded_code
+            @krt = Puppet::Resource::TypeCollection.new("development")
+            @parser = Puppet::Parser::Parser.new "development"
+            @parser.stubs(:known_resource_types).returns @krt
         end
 
-        it "should just return false if the classname is empty" do
-            @parser.expects(:import).never
-            @parser.load("").should == false
+        it "should be able to parse class resources" do
+            @krt.add(Puppet::Resource::Type.new(:hostclass, "foobar", :arguments => {"biz" => nil}))
+            lambda { @parser.parse("class { foobar: biz => stuff }") }.should_not raise_error
         end
-
-        it "should just return true if the item is loaded" do
-            pending "Need to access internal state (@parser's @loaded) to force this"
-            @parser.load("").should == false
+        
+        it "should correctly mark exported resources as exported" do
+            @parser.parse("@@file { '/file': }")
+            @krt.hostclass("").code[0].exported.should be_true
+        end
+        
+        it "should correctly mark virtual resources as virtual" do
+            @parser.parse("@file { '/file': }")
+            @krt.hostclass("").code[0].virtual.should be_true
         end
     end
 end

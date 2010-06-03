@@ -7,7 +7,7 @@
 #
 # = Usage
 #
-#   puppetmasterd [-D|--daemonize|--no-daemonize] [-d|--debug] [-h|--help]
+#   puppet master [-D|--daemonize|--no-daemonize] [-d|--debug] [-h|--help]
 #       [-l|--logdest <file>|console|syslog] [-v|--verbose] [-V|--version]
 #
 # = Description
@@ -51,7 +51,7 @@
 #
 # = Example
 #
-#   puppetmasterd
+#   puppet master
 #
 # = Author
 #
@@ -62,5 +62,5 @@
 # Copyright (c) 2005 Reductive Labs, LLC
 # Licensed under the GNU Public License
 
-require 'puppet/application/puppetmasterd'
-Puppet::Application[:puppetmasterd].run
+require 'puppet/application/master'
+Puppet::Application[:master].run

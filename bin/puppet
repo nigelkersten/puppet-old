@@ -7,14 +7,14 @@
 #
 # = Usage
 #
-#   puppet [-h|--help] [-V|--version] [-d|--debug] [-v|--verbose] [-e|--execute]
+#   puppet apply [-h|--help] [-V|--version] [-d|--debug] [-v|--verbose] [-e|--execute]
 #               [--detailed-exitcodes] [-l|--logdest <file>] <file>
 #
 # = Description
 #
 # This is the standalone puppet execution tool; use it to execute
 # individual manifests that you write.  If you need to execute site-wide
-# manifests, use +puppetd+ and +puppetmasterd+.
+# manifests, use 'puppet agent' and 'puppet master'.
 #
 # = Options
 #
@@ -40,17 +40,17 @@
 #   Print this help message
 #
 # loadclasses::
-#   Load any stored classes.  +puppetd+ caches configured classes (usually at
+#   Load any stored classes. 'puppet agent' caches configured classes (usually at
 #   /etc/puppet/classes.txt), and setting this option causes all of those classes
-#   to be set in your +puppet+ manifest.
+#   to be set in your puppet manifest.
 #
 # logdest::
 #   Where to send messages.  Choose between syslog, the console, and a log file.
 #   Defaults to sending messages to the console.
 #
-# execute::  
-#   Execute a specific piece of Puppet code 
-#  
+# execute::
+#   Execute a specific piece of Puppet code
+#
 # verbose::
 #   Print extra information.
 #
@@ -67,5 +67,7 @@
 # Copyright (c) 2005 Reductive Labs, LLC
 # Licensed under the GNU Public License
 
-require 'puppet/application/puppet'
-Puppet::Application[:puppet].run
+#Puppet::Application[:apply].run # this is so the RDoc::usage hack can find this file
+
+require 'puppet/util/command_line'
+Puppet::Util::CommandLine.new.execute

@@ -113,37 +113,33 @@ describe Puppet::Type.type(:file).attrclass(:source) do
 
     describe "when copying the source values" do
         before do
-            @metadata = stub 'metadata', :owner => 100, :group => 200, :mode => 123, :checksum => "{md5}asdfasdf"
+
+            @resource = Puppet::Type.type(:file).new :path => "/foo/bar"
 
             @source = source.new(:resource => @resource)
-            @source.metadata = @metadata
-
-            @resource.stubs(:deleting?).returns false
+            @metadata = stub 'metadata', :owner => 100, :group => 200, :mode => 123, :checksum => "{md5}asdfasdf", :ftype => "file"
+            @source.stubs(:metadata).returns @metadata
         end
 
         it "should fail if there is no metadata" do
-            @source.metadata = nil
+            @source.stubs(:metadata).returns nil
             @source.expects(:devfail).raises ArgumentError
             lambda { @source.copy_source_values }.should raise_error(ArgumentError)
         end
 
         it "should set :ensure to the file type" do
-            @resource.stubs(:[])
-            @resource.stubs(:[]=)
-            @metadata.stubs(:ftype).returns "foobar"
+            @metadata.stubs(:ftype).returns "file"
 
-            @resource.expects(:[]=).with(:ensure, "foobar")
             @source.copy_source_values
+            @resource[:ensure].must == :file
         end
 
         it "should not set 'ensure' if it is already set to 'absent'" do
-            @resource.stubs(:[])
-            @resource.stubs(:[]=)
-            @metadata.stubs(:ftype).returns "foobar"
+            @metadata.stubs(:ftype).returns "file"
 
-            @resource.expects(:[]).with(:ensure).returns :absent
-            @resource.expects(:[]=).with(:ensure, "foobar").never
+            @resource[:ensure] = :absent
             @source.copy_source_values
+            @resource[:ensure].must == :absent
         end
 
         describe "and the source is a file" do
@@ -151,51 +147,39 @@ describe Puppet::Type.type(:file).attrclass(:source) do
                 @metadata.stubs(:ftype).returns "file"
             end
 
-            it "should copy the metadata's owner, group, and mode to the resource if they are not set on the resource" do
-                @resource.stubs(:[]).returns nil
-
+            it "should copy the metadata's owner, group, checksum, and mode to the resource if they are not set on the resource" do
                 Puppet::Util::SUIDManager.expects(:uid).returns 0
 
-                @resource.expects(:[]=).with(:owner, 100)
-                @resource.expects(:[]=).with(:group, 200)
-                @resource.expects(:[]=).with(:mode, 123)
-                @resource.expects(:[]=).with(:checksum, "{md5}asdfasdf")
-
                 @source.copy_source_values
-            end
 
-            it "should copy the metadata's owner, group, and mode to the resource if they are set to :absent on the resource" do
-                @resource.stubs(:[]).returns :absent
+                @resource[:owner].must == 100
+                @resource[:group].must == 200
+                @resource[:mode].must == 123
 
-                Puppet::Util::SUIDManager.expects(:uid).returns 0
-
-                @resource.expects(:[]=).with(:owner, 100)
-                @resource.expects(:[]=).with(:group, 200)
-                @resource.expects(:[]=).with(:mode, 123)
-                @resource.expects(:[]=).with(:checksum, "{md5}asdfasdf")
-
-                @source.copy_source_values
+                # Metadata calls it checksum, we call it content.
+                @resource[:content].must == @metadata.checksum
             end
 
             it "should not copy the metadata's owner to the resource if it is already set" do
-                @resource.stubs(:[]).returns "value"
-                @resource.expects(:[]).returns "value"
-
-                @resource.expects(:[]=).never
+                @resource[:owner] = 1
+                @resource[:group] = 2
+                @resource[:mode] = 3
+                @resource[:content] = "foobar"
 
                 @source.copy_source_values
+
+                @resource[:owner].must == 1
+                @resource[:group].must == 2
+                @resource[:mode].must == 3
+                @resource[:content].should_not == @metadata.checksum
             end
 
             describe "and puppet is not running as root" do
                 it "should not try to set the owner" do
-                    @resource.stubs(:[]).returns nil
-                    @resource.stubs(:[]=)
-
-                    @resource.expects(:[]=).with(:owner, 100).never
-
                     Puppet::Util::SUIDManager.expects(:uid).returns 100
 
                     @source.copy_source_values
+                    @resource[:owner].should be_nil
                 end
             end
         end
@@ -214,51 +198,75 @@ describe Puppet::Type.type(:file).attrclass(:source) do
         end
     end
 
-    it "should have a method for returning the content" do
-        source.new(:resource => @resource).must respond_to(:content)
+    it "should have a local? method" do
+        source.new(:resource => @resource).must be_respond_to(:local?)
     end
 
-    describe "when looking up the content" do
-        before do
+    context "when accessing source properties" do
+        before(:each) do
             @source = source.new(:resource => @resource)
-            @metadata = stub 'metadata', :source => "/my/source"
-            @source.stubs(:metadata).returns @metadata
-
-            @content = stub 'content', :content => "foobar"
+            @metadata = stub_everything
+            @source.stubs(:metadata).returns(@metadata)
         end
 
-        it "should fail if the metadata does not have a source set" do
-            @metadata.stubs(:source).returns nil
-            lambda { @source.content }.should raise_error(Puppet::DevError)
+        describe "for local sources" do
+            before(:each) do
+                @metadata.stubs(:ftype).returns "file"
+                @metadata.stubs(:source).returns("file:///path/to/source")
+            end
+
+            it "should be local" do
+                @source.must be_local
+            end
+
+            it "should be local if there is no scheme" do
+                @metadata.stubs(:source).returns("/path/to/source")
+                @source.must be_local
+            end
+
+            it "should be able to return the metadata source full path" do
+                @source.full_path.should == "/path/to/source"
+            end
         end
 
-        it "should look the content up from the Content class using the metadata source if no content is set" do
-            Puppet::FileServing::Content.expects(:find).with("/my/source").returns @content
-            @source.content.should == "foobar"
-        end
+        describe "for remote sources" do
+            before(:each) do
+                @metadata.stubs(:ftype).returns "file"
+                @metadata.stubs(:source).returns("puppet://server:8192/path/to/source")
+            end
 
-        it "should return previously found content" do
-            Puppet::FileServing::Content.expects(:find).with("/my/source").returns @content
-            @source.content.should == "foobar"
-            @source.content.should == "foobar"
-        end
+            it "should not be local" do
+                @source.should_not be_local
+            end
 
-        it "should fail if no content can be retrieved" do
-            Puppet::FileServing::Content.expects(:find).with("/my/source").returns nil
-            @source.expects(:fail).raises RuntimeError
-            lambda { @source.content }.should raise_error(RuntimeError)
-        end
+            it "should be able to return the metadata source full path" do
+                @source.full_path.should == "/path/to/source"
+            end
 
-        it "should expire the content appropriately" do
-            expirer = stub 'expired', :dependent_data_expired? => true
+            it "should be able to return the source server" do
+                @source.server.should == "server"
+            end
 
-            content2 = stub 'content', :content => "secondrun"
-            Puppet::FileServing::Content.expects(:find).with("/my/source").times(2).returns(@content).then.returns(content2)
-            @source.content.should == "foobar"
+            it "should be able to return the source port" do
+                @source.port.should == 8192
+            end
 
-            @source.stubs(:expirer).returns expirer
+            describe "which don't specify server or port" do
+                before(:each) do
+                    @metadata.stubs(:source).returns("puppet:///path/to/source")
+                end
 
-            @source.content.should == "secondrun"
+                it "should return the default source server" do
+                    Puppet.settings.expects(:[]).with(:server).returns("myserver")
+                    @source.server.should == "myserver"
+                end
+
+                it "should return the default source port" do
+                    Puppet.settings.expects(:[]).with(:masterport).returns(1234)
+                    @source.port.should == 1234
+                end
+            end
         end
     end
+
 end

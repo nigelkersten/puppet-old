@@ -2,6 +2,7 @@ require 'puppettest'
 require 'puppettest/support/utils'
 require 'fileutils'
 
+
 module PuppetTest
     include PuppetTest::Support::Utils
     def assert_logged(level, regex, msg = nil)
@@ -34,10 +35,6 @@ module PuppetTest
         assert_equal(uid, a[0].chomp.to_i, "UID was incorrect")
         assert_equal(gid, a[1].chomp.to_i, "GID was incorrect")
         FileUtils.rm(filename)
-    end
-
-    def assert_rollback_events(trans, events, msg = nil)
-        run_events(:rollback, trans, events, msg)
     end
 
     def assert_events(events, *resources)

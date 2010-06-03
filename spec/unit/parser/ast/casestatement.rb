@@ -28,16 +28,6 @@ describe Puppet::Parser::AST::CaseStatement do
             @casestmt.evaluate(@scope)
         end
 
-        it "should downcase the evaluated test value if allowed" do
-            Puppet.stubs(:[]).with(:casesensitive).returns(false)
-            value = stub 'test'
-            @test.stubs(:safeevaluate).with(@scope).returns(value)
-
-            value.expects(:downcase)
-
-            @casestmt.evaluate(@scope)
-        end
-
         it "should scan each option" do
             @options.expects(:each).multiple_yields(@option1, @option2)
 
@@ -63,13 +53,6 @@ describe Puppet::Parser::AST::CaseStatement do
             it "should evaluate first matching option" do
                 @opval2.stubs(:evaluate_match).with { |*arg| arg[0] == "value" }.returns(true)
                 @option2.expects(:safeevaluate).with(@scope)
-
-                @casestmt.evaluate(@scope)
-            end
-
-            it "should evaluate_match with sensitive parameter" do
-                Puppet.stubs(:[]).with(:casesensitive).returns(true)
-                @opval1.expects(:evaluate_match).with { |*arg| arg[2][:sensitive] == true }
 
                 @casestmt.evaluate(@scope)
             end
@@ -121,23 +104,56 @@ describe Puppet::Parser::AST::CaseStatement do
             end
 
             it "should unset scope ephemeral variables after option evaluation" do
+                @scope.stubs(:ephemeral_level).returns(:level)
                 @opval1.stubs(:evaluate_match).with { |*arg| arg[0] == "value" and arg[1] == @scope }.returns(true)
                 @option1.stubs(:safeevaluate).with(@scope).returns(:result)
 
-                @scope.expects(:unset_ephemeral_var)
+                @scope.expects(:unset_ephemeral_var).with(:level)
 
                 @casestmt.evaluate(@scope)
             end
 
             it "should not leak ephemeral variables even if evaluation fails" do
+                @scope.stubs(:ephemeral_level).returns(:level)
                 @opval1.stubs(:evaluate_match).with { |*arg| arg[0] == "value" and arg[1] == @scope }.returns(true)
                 @option1.stubs(:safeevaluate).with(@scope).raises
 
-                @scope.expects(:unset_ephemeral_var)
+                @scope.expects(:unset_ephemeral_var).with(:level)
 
                 lambda { @casestmt.evaluate(@scope) }.should raise_error
             end
         end
 
+    end
+
+    it "should match if any of the provided options evaluate as true" do
+        ast = nil
+        AST = Puppet::Parser::AST
+
+        tests = {
+            "one" => %w{a b c},
+            "two" => %w{e f g}
+        }
+        options = tests.collect do |result, values|
+            values = values.collect { |v| AST::Leaf.new :value => v }
+            AST::CaseOpt.new(:value => AST::ASTArray.new(:children => values),
+                :statements => AST::Leaf.new(:value => result))
+        end
+        options << AST::CaseOpt.new(:value => AST::Default.new(:value => "default"),
+            :statements => AST::Leaf.new(:value => "default"))
+
+        ast = nil
+        param = AST::Variable.new(:value => "testparam")
+        ast = AST::CaseStatement.new(:test => param, :options => options)
+
+        tests.each do |should, values|
+            values.each do |value|
+                @scope = Puppet::Parser::Scope.new()
+                @scope.setvar("testparam", value)
+                result = ast.evaluate(@scope)
+
+                result.should == should
+            end
+        end
     end
 end

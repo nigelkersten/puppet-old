@@ -40,25 +40,24 @@ module Puppet
 
         aliasvalue(:false, :absent)
 
-        newvalue(:file) do
+        newvalue(:file, :event => :file_created) do
             # Make sure we're not managing the content some other way
-            if property = (@resource.property(:content) || @resource.property(:source))
+            if property = @resource.property(:content)
                 property.sync
             else
-                @resource.write("", :ensure)
+                @resource.write(:ensure)
                 mode = @resource.should(:mode)
             end
-            return :file_created
         end
 
         #aliasvalue(:present, :file)
-        newvalue(:present) do
+        newvalue(:present, :event => :file_created) do
             # Make a file if they want something, but this will match almost
             # anything.
             set_file
         end
 
-        newvalue(:directory) do
+        newvalue(:directory, :event => :directory_created) do
             mode = @resource.should(:mode)
             parent = File.dirname(@resource[:path])
             unless FileTest.exists? parent
@@ -74,12 +73,11 @@ module Puppet
                 Dir.mkdir(@resource[:path])
             end
             @resource.send(:property_fix)
-            @resource.setchecksum
             return :directory_created
         end
 
 
-        newvalue(:link) do
+        newvalue(:link, :event => :link_created) do
             fail "Cannot create a symlink without a target" unless property = resource.property(:target)
             property.retrieve
             property.mklink
@@ -110,8 +108,13 @@ module Puppet
             else
                 should = property.should
             end
+            if should == :absent
+                is = property.retrieve
+            else
+                is = :absent
+            end
 
-            return property.change_to_s(property.retrieve, should)
+            return property.change_to_s(is, should)
         end
 
         # Check that we can actually create anything

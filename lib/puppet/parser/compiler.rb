@@ -5,16 +5,31 @@ require 'puppet/node'
 require 'puppet/resource/catalog'
 require 'puppet/util/errors'
 
+require 'puppet/resource/type_collection_helper'
+
 # Maintain a graph of scopes, along with a bunch of data
 # about the individual catalog we're compiling.
 class Puppet::Parser::Compiler
     include Puppet::Util
     include Puppet::Util::Errors
-    attr_reader :parser, :node, :facts, :collections, :catalog, :node_scope, :resources
+    include Puppet::Resource::TypeCollectionHelper
+
+    def self.compile(node)
+        new(node).compile.to_resource
+    rescue => detail
+        puts detail.backtrace if Puppet[:trace]
+        raise Puppet::Error, "#{detail} on node #{node.name}"
+    end
+
+    attr_reader :node, :facts, :collections, :catalog, :node_scope, :resources, :relationships
 
     # Add a collection to the global list.
     def add_collection(coll)
         @collections << coll
+    end
+
+    def add_relationship(dep)
+        @relationships << dep
     end
 
     # Store a resource override.
@@ -48,7 +63,7 @@ class Puppet::Parser::Compiler
 
     # Do we use nodes found in the code, vs. the external node sources?
     def ast_nodes?
-        parser.nodes?
+        known_resource_types.nodes?
     end
 
     # Store the fact that we've evaluated a class
@@ -133,18 +148,17 @@ class Puppet::Parser::Compiler
         found
     end
 
+    def evaluate_relationships
+        @relationships.each { |rel| rel.evaluate(catalog) }
+    end
+
     # Return a resource by either its ref or its type and title.
     def findresource(*args)
         @catalog.resource(*args)
     end
 
-    # Set up our compile.  We require a parser
-    # and a node object; the parser is so we can look up classes
-    # and AST nodes, and the node has all of the client's info,
-    # like facts and environment.
-    def initialize(node, parser, options = {})
+    def initialize(node, options = {})
         @node = node
-        @parser = parser
 
         options.each do |param, value|
             begin
@@ -163,7 +177,6 @@ class Puppet::Parser::Compiler
     def newscope(parent, options = {})
         parent ||= topscope
         options[:compiler] = self
-        options[:parser] ||= self.parser
         scope = Puppet::Parser::Scope.new(options)
         scope.parent = parent
         scope
@@ -189,10 +202,10 @@ class Puppet::Parser::Compiler
         # Now see if we can find the node.
         astnode = nil
         @node.names.each do |name|
-            break if astnode = @parser.node(name.to_s.downcase)
+            break if astnode = known_resource_types.node(name.to_s.downcase)
         end
 
-        unless (astnode ||= @parser.node("default"))
+        unless (astnode ||= known_resource_types.node("default"))
             raise Puppet::ParseError, "Could not find default node or by name with '%s'" % node.names.join(", ")
         end
 
@@ -270,9 +283,9 @@ class Puppet::Parser::Compiler
 
     # Find and evaluate our main object, if possible.
     def evaluate_main
-        @main = @parser.find_hostclass("", "") || @parser.newclass("")
+        @main = known_resource_types.find_hostclass([""], "") || known_resource_types.add(Puppet::Resource::Type.new(:hostclass, ""))
         @topscope.source = @main
-        @main_resource = Puppet::Parser::Resource.new(:type => "class", :title => :main, :scope => @topscope, :source => @main)
+        @main_resource = Puppet::Parser::Resource.new("class", :main, :scope => @topscope, :source => @main)
         @topscope.resource = @main_resource
 
         @resources << @main_resource
@@ -332,6 +345,8 @@ class Puppet::Parser::Compiler
     # Make sure all of our resources and such have done any last work
     # necessary.
     def finish
+        evaluate_relationships()
+
         resources.each do |resource|
             # Add in any resource overrides.
             if overrides = resource_overrides(resource)
@@ -346,12 +361,56 @@ class Puppet::Parser::Compiler
 
             resource.finish if resource.respond_to?(:finish)
         end
+
+        add_resource_metaparams
+    end
+
+    def add_resource_metaparams
+        unless main = catalog.resource(:class, :main)
+            raise "Couldn't find main"
+        end
+
+        names = []
+        Puppet::Type.eachmetaparam do |name|
+            next if Puppet::Parser::Resource.relationship_parameter?(name)
+            names << name
+        end
+
+        data = {}
+        catalog.walk(main, :out) do |source, target|
+            if source_data = data[source] || metaparams_as_data(source, names)
+                # only store anything in the data hash if we've actually got
+                # data
+                data[source] ||= source_data
+                source_data.each do |param, value|
+                    target[param] = value if target[param].nil?
+                end
+                data[target] = source_data.merge(metaparams_as_data(target, names))
+            end
+
+            target.tag(*(source.tags))
+        end
+    end
+
+    def metaparams_as_data(resource, params)
+        data = nil
+        params.each do |param|
+            unless resource[param].nil?
+                # Because we could be creating a hash for every resource,
+                # and we actually probably don't often have any data here at all,
+                # we're optimizing a bit by only creating a hash if there's
+                # any data to put in it.
+                data ||= {}
+                data[param] = resource[param]
+            end
+        end
+        data
     end
 
     # Initialize the top-level scope, class, and resource.
     def init_main
         # Create our initial scope and a resource that will evaluate main.
-        @topscope = Puppet::Parser::Scope.new(:compiler => self, :parser => self.parser)
+        @topscope = Puppet::Parser::Scope.new(:compiler => self)
     end
 
     # Set up all of our internal variables.
@@ -369,9 +428,12 @@ class Puppet::Parser::Compiler
         # but they each refer back to the scope that created them.
         @collections = []
 
+        # The list of relationships to evaluate.
+        @relationships = []
+
         # For maintaining the relationship between scopes and their resources.
         @catalog = Puppet::Resource::Catalog.new(@node.name)
-        @catalog.version = @parser.version
+        @catalog.version = known_resource_types.version
 
         # local resource array to maintain resource ordering
         @resources = []

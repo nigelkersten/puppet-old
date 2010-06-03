@@ -257,6 +257,20 @@ describe "Puppet Network Format" do
         it "should have its mimetype set to text/plain" do
             @text.mime.should == "text/plain"
         end
+
+        it "should use 'txt' as its extension" do
+            @text.extension.should == "txt"
+        end
+    end
+
+    describe "dot" do
+        before do
+            @dot = Puppet::Network::FormatHandler.format(:dot)
+        end
+
+        it "should have its mimetype set to text/dot" do
+            @dot.mime.should == "text/dot"
+        end
     end
 
     describe Puppet::Network::FormatHandler.format(:raw) do

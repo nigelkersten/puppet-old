@@ -116,8 +116,8 @@ class Puppet::Indirector::Indirection
     end
 
     # Set up our request object.
-    def request(method, key, arguments = nil)
-        Puppet::Indirector::Request.new(self.name, method, key, arguments)
+    def request(*args)
+        Puppet::Indirector::Request.new(self.name, *args)
     end
 
     # Return the singleton terminus for this indirection.
@@ -145,6 +145,10 @@ class Puppet::Indirector::Indirection
         @terminus_class
     end
 
+    def reset_terminus_class
+        @terminus_class = nil
+    end
+
     # Specify the terminus class to use.
     def terminus_class=(klass)
         validate_terminus_class(klass)
@@ -161,19 +165,22 @@ class Puppet::Indirector::Indirection
         end
     end
 
-    # Expire a cached object, if one is cached.  Note that we now actually
-    # remove it if possible, and only mark it as expired if destroy isn't 
-    # supported.
+    # Expire a cached object, if one is cached.  Note that we don't actually
+    # remove it, we expire it and write it back out to disk.  This way people
+    # can still use the expired object if they want.
     def expire(key, *args)
-        if cache? and instance = cache.find(request(:find, key, *args))
-            Puppet.info "Expiring the #{name} cache of #{instance.name}"
-            if cache.respond_to? :destroy
-                cache.destroy(request(:destroy, instance, *args))
-            else
-                instance.expiration = Time.now - 1
-                cache.save(request(:save,instance,*args))
-            end
-        end
+        request = request(:expire, key, *args)
+
+        return nil unless cache?
+
+        return nil unless instance = cache.find(request(:find, key, *args))
+
+        Puppet.info "Expiring the %s cache of %s" % [self.name, instance.name]
+
+        # Set an expiration date in the past
+        instance.expiration = Time.now - 60
+
+        cache.save(request(:save, instance, *args))
     end
 
     # Search for an instance in the appropriate terminus, caching the
@@ -213,7 +220,7 @@ class Puppet::Indirector::Indirection
             return nil
         end
 
-        Puppet.debug "Using cached #{name} for #{request.key}, good until #{cached.expiration}"
+        Puppet.debug "Using cached %s for %s" % [self.name, request.key]
         return cached
     end
 
@@ -248,8 +255,8 @@ class Puppet::Indirector::Indirection
 
     # Save the instance in the appropriate terminus.  This method is
     # normally an instance method on the indirected class.
-    def save(instance, *args)
-        request = request(:save, instance, *args)
+    def save(key, instance = nil)
+        request = request(:save, key, instance)
         terminus = prepare(request)
 
         result = terminus.save(request)

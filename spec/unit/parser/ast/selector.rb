@@ -40,16 +40,6 @@ describe Puppet::Parser::AST::Selector do
             @selector.evaluate(@scope)
         end
 
-        it "should downcase the evaluated param value if allowed" do
-            Puppet.stubs(:[]).with(:casesensitive).returns(false)
-            value = stub 'param'
-            @param.stubs(:safeevaluate).with(@scope).returns(value)
-
-            value.expects(:downcase)
-
-            @selector.evaluate(@scope)
-        end
-
         it "should scan each option" do
             @values.expects(:each).multiple_yields(@value1, @value2)
 
@@ -96,22 +86,6 @@ describe Puppet::Parser::AST::Selector do
                 @selector.evaluate(@scope)
             end
 
-            it "should transmit the sensitive parameter to evaluate_match" do
-                Puppet.stubs(:[]).with(:casesensitive).returns(:sensitive)
-                @param1.expects(:evaluate_match).with { |*arg| arg[2][:sensitive] == :sensitive }
-
-                @selector.evaluate(@scope)
-            end
-
-            it "should transmit the AST file and line to evaluate_match" do
-                @selector.file = :file
-                @selector.line = :line
-                @param1.expects(:evaluate_match).with { |*arg| arg[2][:file] == :file and arg[2][:line] == :line }
-
-                @selector.evaluate(@scope)
-            end
-
-
             it "should evaluate the matching param" do
                 @param1.stubs(:evaluate_match).with { |*arg| arg[0] == "value" and arg[1] == @scope }.returns(true)
 
@@ -128,19 +102,21 @@ describe Puppet::Parser::AST::Selector do
             end
 
             it "should unset scope ephemeral variables after option evaluation" do
+                @scope.stubs(:ephemeral_level).returns(:level)
                 @param1.stubs(:evaluate_match).with { |*arg| arg[0] == "value" and arg[1] == @scope }.returns(true)
                 @value1.stubs(:safeevaluate).with(@scope).returns(:result)
 
-                @scope.expects(:unset_ephemeral_var)
+                @scope.expects(:unset_ephemeral_var).with(:level)
 
                 @selector.evaluate(@scope)
             end
 
             it "should not leak ephemeral variables even if evaluation fails" do
+                @scope.stubs(:ephemeral_level).returns(:level)
                 @param1.stubs(:evaluate_match).with { |*arg| arg[0] == "value" and arg[1] == @scope }.returns(true)
                 @value1.stubs(:safeevaluate).with(@scope).raises
 
-                @scope.expects(:unset_ephemeral_var)
+                @scope.expects(:unset_ephemeral_var).with(:level)
 
                 lambda { @selector.evaluate(@scope) }.should raise_error
             end

@@ -47,30 +47,24 @@ module PuppetTest::ParserTesting
     end
 
     def mkcompiler(parser = nil)
-        parser ||= mkparser
         node = mknode
-        return Compiler.new(node, parser)
+        return Compiler.new(node)
     end
 
     def mknode(name = nil)
         require 'puppet/node'
-        name ||= "nodename"
-        Puppet::Network::Handler.handler(:node)
-        Puppet::Node.new(name)
+        Puppet::Node.new(name || "nodename")
     end
 
-    def mkinterp
-        Puppet::Parser::Interpreter.new
-    end
-
-    def mkparser(args = {})
-        Puppet::Parser::Parser.new(args)
+    def mkparser
+        Puppet::Node::Environment.clear
+        Puppet::Parser::Parser.new(Puppet::Node::Environment.new)
     end
 
     def mkscope(hash = {})
-        hash[:parser] ||= mkparser
-        compiler ||= mkcompiler(hash[:parser])
-        compiler.topscope.source = (hash[:parser].find_hostclass("", "") || hash[:parser].newclass(""))
+        parser ||= mkparser
+        compiler ||= mkcompiler
+        compiler.topscope.source = (parser.find_hostclass("", "") || parser.newclass(""))
 
         unless compiler.topscope.source
             raise "Could not find source for scope"
@@ -112,7 +106,7 @@ module PuppetTest::ParserTesting
                 :line => __LINE__,
                 :title => title,
                 :type => type,
-                :params => resourceinst(params)
+                :parameters => resourceinst(params)
             )
         }
     end
@@ -130,7 +124,7 @@ module PuppetTest::ParserTesting
                 :line => __LINE__,
                 :object => resourceref(type, title),
                 :type => type,
-                :params => resourceinst(params)
+                :parameters => resourceinst(params)
             )
         }
     end
@@ -277,7 +271,7 @@ module PuppetTest::ParserTesting
                 :file => __FILE__,
                 :line => __LINE__,
                 :type => type,
-                :params => past
+                :parameters => past
             )
         }
     end
@@ -306,13 +300,10 @@ module PuppetTest::ParserTesting
         interp = nil
         oldmanifest = Puppet[:manifest]
         Puppet[:manifest] = manifest
-        assert_nothing_raised {
-            interp = Puppet::Parser::Interpreter.new
-        }
 
         trans = nil
         assert_nothing_raised {
-            trans = interp.compile(mknode)
+            trans = Puppet::Parser::Compiler.new(mknode).compile
         }
 
         config = nil

@@ -19,6 +19,28 @@ Puppet::Type.newtype(:tidy) do
         isnamevar
     end
 
+    newparam(:recurse) do
+        desc "If target is a directory, recursively descend
+            into the directory looking for files to tidy."
+
+        newvalues(:true, :false, :inf, /^[0-9]+$/)
+
+        # Replace the validation so that we allow numbers in
+        # addition to string representations of them.
+        validate { |arg| }
+        munge do |value|
+            newval = super(value)
+            case newval
+            when :true, :inf; true
+            when :false; false
+            when Integer, Fixnum, Bignum; value
+            when /^\d+$/; Integer(value)
+            else
+                raise ArgumentError, "Invalid recurse value %s" % value.inspect
+            end
+        end
+    end
+
     newparam(:matches) do
         desc "One or more (shell type) file glob patterns, which restrict
             the list of files to be tidied to those whose basenames match
@@ -29,22 +51,28 @@ Puppet::Type.newtype(:tidy) do
 
                     tidy { \"/tmp\":
                         age => \"1w\",
-                        recurse => false,
+                        recurse => 1,
                         matches => [ \"[0-9]pub*.tmp\", \"*.temp\", \"tmpfile?\" ]
                     }
 
             This removes files from \/tmp if they are one week old or older,
             are not in a subdirectory and match one of the shell globs given.
 
-            Note that the patterns are matched against the
-            basename of each file -- that is, your glob patterns should not
-            have any '/' characters in them, since you are only specifying
-            against the last bit of the file."
+            Note that the patterns are matched against the basename of each 
+            file -- that is, your glob patterns should not have any '/' 
+            characters in them, since you are only specifying against the last 
+            bit of the file.
+            
+            Finally, note that you must now specify a non-zero/non-false value 
+            for recurse if matches is used, as matches only apply to files found
+            by recursion (there's no reason to use static patterns match against 
+            a statically determined path).  Requiering explicit recursion clears
+            up a common source of confusion."
 
         # Make sure we convert to an array.
         munge do |value|
-            value = [value] unless value.is_a?(Array)
-            value
+            fail "Tidy can't use matches with recurse 0, false, or undef" if "#{@resource[:recurse]}" =~ /^(0|false|)$/
+            [value].flatten
         end
 
         # Does a given path match our glob patterns, if any?  Return true
@@ -170,28 +198,6 @@ Puppet::Type.newtype(:tidy) do
         defaultto :atime
     end
 
-    newparam(:recurse) do
-        desc "If target is a directory, recursively descend
-            into the directory looking for files to tidy."
-
-        newvalues(:true, :false, :inf, /^[0-9]+$/)
-
-        # Replace the validation so that we allow numbers in
-        # addition to string representations of them.
-        validate { |arg| }
-        munge do |value|
-            newval = super(value)
-            case newval
-            when :true, :inf; true
-            when :false; false
-            when Integer, Fixnum, Bignum; value
-            when /^\d+$/; Integer(value)
-            else
-                raise ArgumentError, "Invalid recurse value %s" % value.inspect
-            end
-        end
-    end
-
     newparam(:rmdirs, :boolean => true) do
         desc "Tidy directories in addition to files; that is, remove
             directories whose age is older than the specified criteria.
@@ -215,7 +221,7 @@ Puppet::Type.newtype(:tidy) do
         super
 
         # only allow backing up into filebuckets
-        unless self[:backup].is_a? Puppet::Network::Client.dipper
+        unless self[:backup].is_a? Puppet::FileBucket::Dipper
             self[:backup] = false
         end
     end
@@ -275,9 +281,9 @@ Puppet::Type.newtype(:tidy) do
             dir = File.dirname(path)
             next unless resource = files_by_name[dir]
             if resource[:require]
-                resource[:require] << Puppet::Resource::Reference.new(:file, path)
+                resource[:require] << Puppet::Resource.new(:file, path)
             else
-                resource[:require] = [Puppet::Resource::Reference.new(:file, path)]
+                resource[:require] = [Puppet::Resource.new(:file, path)]
             end
         end
 

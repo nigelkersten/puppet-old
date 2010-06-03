@@ -4,15 +4,13 @@ class Puppet::Parser::AST
     class ASTHash < Leaf
         include Enumerable
 
-        def [](index)
-        end
-
         # Evaluate our children.
         def evaluate(scope)
             items = {}
 
             @value.each_pair do |k,v|
-                items.merge!({ k => v.safeevaluate(scope) })
+                key = k.respond_to?(:safeevaluate) ? k.safeevaluate(scope) : k
+                items.merge!({ key => v.safeevaluate(scope) })
             end
 
             return items

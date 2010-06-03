@@ -9,7 +9,6 @@ require 'singleton'
 require 'facter'
 require 'puppet/error'
 require 'puppet/util'
-require 'puppet/util/log'
 require 'puppet/util/autoload'
 require 'puppet/util/settings'
 require 'puppet/util/feature'
@@ -24,7 +23,7 @@ require 'puppet/util/suidmanager'
 # it's also a place to find top-level commands like 'debug'
 
 module Puppet
-    PUPPETVERSION = '0.25.4'
+    PUPPETVERSION = '0.25.5'
 
     def Puppet.version
         return PUPPETVERSION
@@ -42,23 +41,9 @@ module Puppet
     # The services running in this process.
     @services ||= []
 
-    # define helper messages for each of the message levels
-    Puppet::Util::Log.eachlevel { |level|
-        define_method(level,proc { |args|
-            if args.is_a?(Array)
-                args = args.join(" ")
-            end
-            Puppet::Util::Log.create(
-                :level => level,
-                :message => args
-            )
-        })
-        module_function level
-    }
+    require 'puppet/util/logging'
 
-    # I keep wanting to use Puppet.error
-    # XXX this isn't actually working right now
-    alias :error :err
+    extend Puppet::Util::Logging
 
     # The feature collection
     @features = Puppet::Util::Feature.new('puppet/feature')
@@ -166,11 +151,14 @@ module Puppet
 end
 
 require 'puppet/type'
+require 'puppet/parser'
+require 'puppet/resource'
 require 'puppet/network'
 require 'puppet/ssl'
 require 'puppet/module'
 require 'puppet/util/storage'
-require 'puppet/parser/interpreter'
+require 'puppet/status'
+require 'puppet/file_bucket/file'
 
 if Puppet[:storeconfigs]
     require 'puppet/rails'

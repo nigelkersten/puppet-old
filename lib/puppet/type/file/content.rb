@@ -1,9 +1,18 @@
+require 'net/http'
+require 'uri'
+
 require 'puppet/util/checksums'
+require 'puppet/network/http/api/v1'
+require 'puppet/network/http/compression'
 
 module Puppet
     Puppet::Type.type(:file).newproperty(:content) do
         include Puppet::Util::Diff
         include Puppet::Util::Checksums
+        include Puppet::Network::HTTP::API::V1
+        include Puppet::Network::HTTP::Compression.module
+
+        attr_reader :actual_content
 
         desc "Specify the contents of a file as a string.  Newlines, tabs, and
             spaces can be specified using the escaped syntax (e.g., \\n for a
@@ -30,17 +39,21 @@ module Puppet
         munge do |value|
             if value == :absent
                 value
+            elsif checksum?(value)
+                # XXX This is potentially dangerous because it means users can't write a file whose
+                # entire contents are a plain checksum
+                value
             else
                 @actual_content = value
-                "{#{checksum_type}}" + send(self.checksum_type, value)
+                resource.parameter(:checksum).sum(value)
             end
         end
 
         # Checksums need to invert how changes are printed.
         def change_to_s(currentvalue, newvalue)
             # Our "new" checksum value is provided by the source.
-            unless source = resource.parameter(:source) and newvalue = source.checksum
-                newvalue = "unknown checksum"
+            if source = resource.parameter(:source) and tmp = source.checksum
+                newvalue = tmp
             end
             if currentvalue == :absent
                 return "defined content as '%s'" % [newvalue]
@@ -54,10 +67,8 @@ module Puppet
         def checksum_type
             if source = resource.parameter(:source)
                 result = source.checksum
-            elsif checksum = resource.parameter(:checksum)
-                result = checksum.checktype
-            else
-                return :md5
+            else checksum = resource.parameter(:checksum)
+                result = resource[:checksum]
             end
             if result =~ /^\{(\w+)\}.+/
                 return $1.to_sym
@@ -66,21 +77,12 @@ module Puppet
             end
         end
 
-        # If content was specified, return that; else try to return the source content;
-        # else, return nil.
-        def actual_content
-            if defined?(@actual_content) and @actual_content
-                return @actual_content
-            end
-
-            if s = resource.parameter(:source)
-                return s.content
-            end
-            return nil
+        def length
+            (actual_content and actual_content.length) || 0
         end
 
         def content
-            self.should || (s = resource.parameter(:source) and s.content)
+            self.should
         end
 
         # Override this method to provide diffs if asked for.
@@ -94,17 +96,9 @@ module Puppet
             end
 
             return true if ! @resource.replace?
+            return true unless self.should
 
-            if self.should
-                result = super
-            elsif source = resource.parameter(:source)
-                fail "Got a remote source with no checksum" unless source.checksum
-                result = (is == source.checksum)
-            else
-                # We've got no content specified, and no source from which to
-                # get content.
-                return true
-            end
+            result = super
 
             if ! result and Puppet[:show_diff]
                 string_file_diff(@resource[:path], actual_content)
@@ -116,10 +110,10 @@ module Puppet
             return :absent unless stat = @resource.stat
             ftype = stat.ftype
             # Don't even try to manage the content on directories or links
-            return nil if ["directory","link"].include? ftype or checksum_type.nil?
+            return nil if ["directory","link"].include?(ftype)
 
             begin
-                "{#{checksum_type}}" + send(checksum_type.to_s + "_file", resource[:path]).to_s
+                resource.parameter(:checksum).sum_file(resource[:path])
             rescue => detail
                 raise Puppet::Error, "Could not read #{ftype} #{@resource.title}: #{detail}"
             end
@@ -138,9 +132,46 @@ module Puppet
             # We're safe not testing for the 'source' if there's no 'should'
             # because we wouldn't have gotten this far if there weren't at least
             # one valid value somewhere.
-            @resource.write(actual_content, :content)
+            @resource.write(:content)
 
             return return_event
+        end
+
+        def write(file)
+            self.fail "Writing content that wasn't provided" unless actual_content || resource.parameter(:source)
+            resource.parameter(:checksum).sum_stream { |sum|
+                each_chunk_from(actual_content || resource.parameter(:source)) { |chunk|
+                    sum << chunk
+                    file.print chunk
+                }
+            }
+        end
+
+        def each_chunk_from(source_or_content)
+            if source_or_content.is_a?(String)
+                yield source_or_content
+            elsif source_or_content.nil?
+                nil
+            elsif source_or_content.local?
+                File.open(source_or_content.full_path, "r") do |src|
+                    while chunk = src.read(8192)
+                        yield chunk
+                    end
+                end
+            else
+                request = Puppet::Indirector::Request.new(:file_content, :find, source_or_content.full_path)
+                connection = Puppet::Network::HttpPool.http_instance(source_or_content.server, source_or_content.port)
+                connection.request_get(indirection2uri(request), add_accept_encoding({"Accept" => "raw"})) do |response|
+                    case response.code
+                    when "404"; nil
+                    when /^2/;  uncompress(response) { |uncompressor| response.read_body { |chunk| yield uncompressor.uncompress(chunk) } }
+                    else
+                        # Raise the http error if we didn't get a 'success' of some kind.
+                        message = "Error %s on SERVER: %s" % [response.code, (response.body||'').empty? ? response.message : uncompress_body(response)]
+                        raise Net::HTTPError.new(message, response)
+                    end
+                end
+            end
         end
     end
 end

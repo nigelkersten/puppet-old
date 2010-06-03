@@ -4,7 +4,7 @@ class Puppet::Parser::AST
     # A statement syntactically similar to an ResourceDef, but uses a
     # capitalized object type and cannot have a name.
     class ResourceDefaults < AST::Branch
-        attr_accessor :type, :params
+        attr_accessor :type, :parameters
 
         associates_doc
 
@@ -12,9 +12,9 @@ class Puppet::Parser::AST
         # object type.
         def evaluate(scope)
             # Use a resource reference to canonize the type
-            ref = Puppet::Resource::Reference.new(@type, "whatever")
+            ref = Puppet::Resource.new(@type, "whatever")
             type = ref.type
-            params = @params.safeevaluate(scope)
+            params = @parameters.safeevaluate(scope)
 
             parsewrap do
                 scope.setdefaults(type, params)

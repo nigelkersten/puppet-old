@@ -28,10 +28,6 @@ describe Puppet::Transaction::Change do
             # Yay rspec :)
             Change.new(@property, "value").should.should == @property.should
         end
-
-        it "should set its path to the path of the property plus 'change'" do
-            Change.new(@property, "value").path.should == [@property.path, "change"]
-        end
     end
 
     describe "when an instance" do
@@ -55,131 +51,115 @@ describe Puppet::Transaction::Change do
             @change.resource.should == :myresource
         end
 
-        it "should have a method for marking that it's been execution" do
-            @change.changed = true
-            @change.changed?.should be_true
-        end
-
         describe "and creating an event" do
             before do
-                @property.stubs(:resource).returns "myresource"
+                @resource = stub 'resource', :ref => "My[resource]"
+                @event = stub 'event', :previous_value= => nil, :desired_value= => nil
+                @property.stubs(:event).returns @event
             end
 
-            it "should produce a warning if the event name is not a symbol" do
-                @property.expects(:warning)
-                @property.stubs(:event).returns :myevent
-                @change.event("a string")
+            it "should use the property to create the event" do
+                @property.expects(:event).returns @event
+                @change.event.should equal(@event)
             end
 
-            it "should use the property to generate the event name if the provided name is not a symbol" do
-                @property.stubs(:warning)
-                @property.expects(:event).with(@change.should).returns :myevent
+            it "should set 'previous_value' from the change's 'is'" do
+                @event.expects(:previous_value=).with(@change.is)
+                @change.event
+            end
 
-                Puppet::Transaction::Event.expects(:new).with { |name, source| name == :myevent }
-
-                @change.event("a string")
+            it "should set 'desired_value' from the change's 'should'" do
+                @event.expects(:desired_value=).with(@change.should)
+                @change.event
             end
         end
 
         describe "and executing" do
+            before do
+                @event = Puppet::Transaction::Event.new(:myevent)
+                @event.stubs(:send_log)
+                @change.stubs(:noop?).returns false
+                @property.stubs(:event).returns @event
+
+                @property.stub_everything
+                @property.stubs(:resource).returns "myresource"
+                @property.stubs(:name).returns :myprop
+            end
+
             describe "in noop mode" do
                 before { @change.stubs(:noop?).returns true }
 
                 it "should log that it is in noop" do
                     @property.expects(:is_to_s)
                     @property.expects(:should_to_s)
-                    @property.expects(:log)
 
-                    @change.stubs :event
-                    @change.forward
+                    @event.expects(:message=).with { |msg| msg.include?("should be") }
+
+                    @change.apply
                 end
 
                 it "should produce a :noop event and return" do
                     @property.stub_everything
 
-                    @change.expects(:event).with(:noop).returns :noop_event
+                    @event.expects(:status=).with("noop")
 
-                    @change.forward.should == [:noop_event]
+                    @change.apply.should == @event
                 end
             end
 
-            describe "without noop" do
-                before do
-                    @change.stubs(:noop?).returns false
-                    @property.stub_everything
-                    @property.stubs(:resource).returns "myresource"
-                    @property.stubs(:name).returns :myprop
-                end
+            it "should sync the property" do
+                @property.expects(:sync)
 
-                it "should sync the property" do
-                    @property.expects(:sync)
-
-                    @change.forward
-                end
-
-                it "should return the default event if syncing the property returns nil" do
-                    @property.stubs(:sync).returns nil
-
-                    @change.expects(:event).with(:myprop_changed).returns :myevent
-
-                    @change.forward.should == [:myevent]
-                end
-
-                it "should return the default event if syncing the property returns an empty array" do
-                    @property.stubs(:sync).returns []
-
-                    @change.expects(:event).with(:myprop_changed).returns :myevent
-
-                    @change.forward.should == [:myevent]
-                end
-
-                it "should log the change" do
-                    @property.expects(:sync).returns [:one]
-
-                    @property.expects(:log)
-                    @property.expects(:change_to_s)
-
-                    @change.forward
-                end
-
-                it "should return an array of events" do
-                    @property.expects(:sync).returns [:one, :two]
-
-                    @change.expects(:event).with(:one).returns :uno
-                    @change.expects(:event).with(:two).returns :dos
-
-                    @change.forward.should == [:uno, :dos]
-                end
+                @change.apply
             end
 
-            describe "backward" do
-                before do
-                    @property = stub 'property'
-                    @property.stub_everything
-                    @property.stubs(:should).returns "shouldval"
-                    @change = Change.new(@property, "value")
-                    @change.stubs :go
+            it "should return the default event if syncing the property returns nil" do
+                @property.stubs(:sync).returns nil
+
+                @change.expects(:event).with(nil).returns @event
+
+                @change.apply.should == @event
+            end
+
+            it "should return the default event if syncing the property returns an empty array" do
+                @property.stubs(:sync).returns []
+
+                @change.expects(:event).with(nil).returns @event
+
+                @change.apply.should == @event
+            end
+
+            it "should log the change" do
+                @property.expects(:sync).returns [:one]
+
+                @event.expects(:send_log)
+
+                @change.apply
+            end
+
+            it "should set the event's message to the change log" do
+                @property.expects(:change_to_s).returns "my change"
+                @change.apply.message.should == "my change"
+            end
+
+            it "should set the event's status to 'success'" do
+                @change.apply.status.should == "success"
+            end
+
+            describe "and the change fails" do
+                before { @property.expects(:sync).raises "an exception" }
+
+                it "should catch the exception and log the err" do
+                    @event.expects(:send_log)
+                    lambda { @change.apply }.should_not raise_error
                 end
 
-                it "should swap the 'is' and 'should' values" do
-                    @change.backward
-                    @change.is.should == "shouldval"
-                    @change.should.should == "value"
+                it "should mark the event status as 'failure'" do
+                    @change.apply.status.should == "failure"
                 end
 
-                it "should set the 'should' value on the property to the previous 'is' value" do
-                    @property.expects(:should=).with "value"
-                    @change.backward
-                end
-
-                it "should log that it's reversing the change" do
-                    @property.expects(:info)
-                    @change.backward
-                end
-
-                it "should execute" do
-                    @change.expects(:go)
-                    @change.backward
+                it "should set the event log to a failure log" do
+                    @change.apply.message.should be_include("failed")
                 end
             end
         end

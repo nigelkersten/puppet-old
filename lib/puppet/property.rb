@@ -5,6 +5,7 @@ require 'puppet'
 require 'puppet/parameter'
 
 class Puppet::Property < Puppet::Parameter
+    require 'puppet/property/ensure'
 
     # Because 'should' uses an array, we have a special method for handling
     # it.  We also want to keep copies of the original values, so that
@@ -93,89 +94,70 @@ class Puppet::Property < Puppet::Parameter
         begin
             provider.send(self.class.name.to_s + "=", value)
         rescue NoMethodError
-            self.fail "The %s provider can not handle attribute %s" %
-                [provider.class.name, self.class.name]
+            self.fail "The #{provider.class.name} provider can not handle attribute #{self.class.name}"
         end
     end
 
     # Call the dynamically-created method associated with our value, if
     # there is one.
     def call_valuemethod(name, value)
-        event = nil
         if method = self.class.value_option(name, :method) and self.respond_to?(method)
-            #self.debug "setting %s (currently %s)" % [value, self.retrieve]
-
             begin
                 event = self.send(method)
             rescue Puppet::Error
                 raise
             rescue => detail
-                if Puppet[:trace]
-                    puts detail.backtrace
-                end
-                error = Puppet::Error.new("Could not set %s on %s: %s" %
-                    [value, self.class.name, detail], @resource.line, @resource.file)
+                puts detail.backtrace if Puppet[:trace]
+                error = Puppet::Error.new("Could not set '#{value} on #{self.class.name}: #{detail}", @resource.line, @resource.file)
                 error.set_backtrace detail.backtrace
                 raise error
             end
         elsif block = self.class.value_option(name, :block)
             # FIXME It'd be better here to define a method, so that
             # the blocks could return values.
-            event = self.instance_eval(&block)
+            self.instance_eval(&block)
         else
-            devfail "Could not find method for value '%s'" % name
+            devfail "Could not find method for value '#{name}'"
         end
-        return event, name
     end
 
     # How should a property change be printed as a string?
-    def change_to_s(currentvalue, newvalue)
+    def change_to_s(current_value, newvalue)
         begin
-            if currentvalue == :absent
-                return "defined '%s' as '%s'" %
-                    [self.name, self.should_to_s(newvalue)]
+            if current_value == :absent
+                return "defined '#{name}' as '#{should_to_s(newvalue)}'"
             elsif newvalue == :absent or newvalue == [:absent]
-                return "undefined %s from '%s'" %
-                    [self.name, self.is_to_s(currentvalue)]
+                return "undefined '#{name}' from '#{is_to_s(current_value)}'"
             else
-                return "%s changed '%s' to '%s'" %
-                    [self.name, self.is_to_s(currentvalue), self.should_to_s(newvalue)]
+                return "#{name} changed '#{is_to_s(current_value)}' to '#{should_to_s(newvalue)}'"
             end
         rescue Puppet::Error, Puppet::DevError
             raise
         rescue => detail
             puts detail.backtrace if Puppet[:trace]
-            raise Puppet::DevError, "Could not convert change %s to string: %s" %
-                [self.name, detail]
+            raise Puppet::DevError, "Could not convert change '#{name}' to string: #{detail}"
         end
     end
 
     # Figure out which event to return.
-    def event(name, event = nil)
-        if value_event = self.class.value_option(name, :event)
-            return value_event
-        end
+    def event_name
+        value = self.should
 
-        if event and event.is_a?(Symbol)
-            if event == :nochange
-                return nil
-            else
-                return event
-            end
-        end
+        event_name = self.class.value_option(value, :event) and return event_name
 
-        if self.class.name == :ensure
-            event = case self.should
-            when :present; (@resource.class.name.to_s + "_created").intern
-            when :absent; (@resource.class.name.to_s + "_removed").intern
-            else
-                (@resource.class.name.to_s + "_changed").intern
-            end
+        name == :ensure or return (name.to_s + "_changed").to_sym
+
+        return (resource.type.to_s + case value
+        when :present; "_created"
+        when :absent; "_removed"
         else
-            event = (@resource.class.name.to_s + "_changed").intern
-        end
+            "_changed"
+        end).to_sym
+    end
 
-        return event
+    # Return a modified form of the resource event.
+    def event
+        resource.event :name => event_name, :desired_value => should, :property => self, :source_description => path
     end
 
     attr_reader :shadow
@@ -196,31 +178,19 @@ class Puppet::Property < Puppet::Parameter
     # to be an array, and if @is matches any of those values, then
     # we consider it to be in-sync.
     def insync?(is)
-        #debug "%s value is '%s', should be '%s'" %
-        #    [self,self.is.inspect,self.should.inspect]
-        unless defined? @should and @should
-            return true
-        end
+        return true unless @should
 
         unless @should.is_a?(Array)
-            self.devfail "%s's should is not array" % self.class.name
+            self.devfail "#{self.class.name}'s should is not array"
         end
 
         # an empty array is analogous to no should values
-        if @should.empty?
-            return true
-        end
+        return true if @should.empty?
 
         # Look for a matching value
-        if match_all?
-            return (is == @should or is == @should.collect { |v| v.to_s })
-        else
-            @should.each { |val|
-                if is == val or is == val.to_s
-                    return true
-                end
-            }
-        end
+        return (is == @should or is == @should.collect { |v| v.to_s }) if match_all?
+
+        @should.each { |val| return true if is == val or is == val.to_s }
 
         # otherwise, return false
         return false
@@ -236,11 +206,8 @@ class Puppet::Property < Puppet::Parameter
 
     # Send a log message.
     def log(msg)
-        unless @resource[:loglevel]
-            self.devfail "Parent %s has no loglevel" % @resource.name
-        end
         Puppet::Util::Log.create(
-            :level => @resource[:loglevel],
+            :level => resource[:loglevel],
             :message => msg,
             :source => self
         )
@@ -295,15 +262,12 @@ class Puppet::Property < Puppet::Parameter
         call = self.class.value_option(name, :call) || :none
 
         if call == :instead
-            event, tmp = call_valuemethod(name, value)
+            call_valuemethod(name, value)
         elsif call == :none
-            if @resource.provider
-                call_provider(value)
-            else
-                # They haven't provided a block, and our parent does not have
-                # a provider, so we have no idea how to handle this.
-                self.fail "%s cannot handle values of type %s" % [self.class.name, value.inspect]
-            end
+            # They haven't provided a block, and our parent does not have
+            # a provider, so we have no idea how to handle this.
+            self.fail "#{self.class.name} cannot handle values of type #{value.inspect}" unless @resource.provider
+            call_provider(value)
         else
             # LAK:NOTE 20081031 This is a change in behaviour -- you could
             # previously specify :call => [;before|:after], which would call
@@ -311,10 +275,8 @@ class Puppet::Property < Puppet::Parameter
             # was never used, and it makes things unecessarily complicated.
             # If you want to specify a block and still call the setter, then
             # do so in the block.
-            devfail "Cannot use obsolete :call value '%s' for property '%s'" % [call, self.class.name]
+            devfail "Cannot use obsolete :call value '#{call}' for property '#{self.class.name}'"
         end
-
-        return event(name, event)
     end
 
     # If there's a shadowing metaparam, instantiate it now.
@@ -327,18 +289,16 @@ class Puppet::Property < Puppet::Parameter
 
     # Only return the first value
     def should
-        if defined? @should
-            unless @should.is_a?(Array)
-                self.devfail "should for %s on %s is not an array" %
-                    [self.class.name, @resource.name]
-            end
-            if match_all?
-                return @should.collect { |val| self.unmunge(val) }
-            else
-                return self.unmunge(@should[0])
-            end
+        return nil unless defined? @should
+
+        unless @should.is_a?(Array)
+            self.devfail "should for #{self.class.name} on #{resource.name} is not an array"
+        end
+
+        if match_all?
+            return @should.collect { |val| self.unmunge(val) }
         else
-            return nil
+            return self.unmunge(@should[0])
         end
     end
 
@@ -363,10 +323,6 @@ class Puppet::Property < Puppet::Parameter
         set(should)
     end
 
-    def to_s
-        return "%s(%s)" % [@resource.name,self.name]
-    end
-
     # Verify that the passed value is valid.
     # If the developer uses a 'validate' hook, this method will get overridden.
     def unsafe_validate(value)
@@ -377,7 +333,9 @@ class Puppet::Property < Puppet::Parameter
     # Make sure that we've got all of the required features for a given value.
     def validate_features_per_value(value)
         if features = self.class.value_option(self.class.value_name(value), :required_features)
-            raise ArgumentError, "Provider must have features '%s' to set '%s' to '%s'" % [[features].flatten.join(", "), self.class.name, value] unless provider.satisfies?(features)
+            features = Array(features)
+            needed_features = features.collect { |f| f.to_s }.join(", ")
+            raise ArgumentError, "Provider must have features '#{needed_features}' to set '#{self.class.name}' to '#{value}'" unless provider.satisfies?(features)
         end
     end
 
@@ -390,98 +348,5 @@ class Puppet::Property < Puppet::Parameter
     # Note that the should= method does all of the validation and such.
     def value=(value)
         self.should = value
-    end
-
-    # This property will get automatically added to any type that responds
-    # to the methods 'exists?', 'create', and 'destroy'.
-    class Ensure < Puppet::Property
-        @name = :ensure
-
-        def self.defaultvalues
-            newvalue(:present) do
-                if @resource.provider and @resource.provider.respond_to?(:create)
-                    @resource.provider.create
-                else
-                    @resource.create
-                end
-                nil # return nil so the event is autogenerated
-            end
-
-            newvalue(:absent) do
-                if @resource.provider and @resource.provider.respond_to?(:destroy)
-                    @resource.provider.destroy
-                else
-                    @resource.destroy
-                end
-                nil # return nil so the event is autogenerated
-            end
-
-            defaultto do
-                if @resource.managed?
-                    :present
-                else
-                    nil
-                end
-            end
-
-            # This doc will probably get overridden
-            @doc ||= "The basic property that the resource should be in."
-        end
-
-        def self.inherited(sub)
-            # Add in the two properties that everyone will have.
-            sub.class_eval do
-            end
-        end
-
-        def change_to_s(currentvalue, newvalue)
-            begin
-                if currentvalue == :absent or currentvalue.nil?
-                    return "created"
-                elsif newvalue == :absent
-                    return "removed"
-                else
-                    return "%s changed '%s' to '%s'" %
-                        [self.name, self.is_to_s(currentvalue), self.should_to_s(newvalue)]
-                end
-            rescue Puppet::Error, Puppet::DevError
-                raise
-            rescue => detail
-                raise Puppet::DevError, "Could not convert change %s to string: %s" %
-                    [self.name, detail]
-            end
-        end
-
-        def retrieve
-            # XXX This is a problem -- whether the object exists or not often
-            # depends on the results of other properties, yet we're the first property
-            # to get checked, which means that those other properties do not have
-            # @is values set.  This seems to be the source of quite a few bugs,
-            # although they're mostly logging bugs, not functional ones.
-            if prov = @resource.provider and prov.respond_to?(:exists?)
-                result = prov.exists?
-            elsif @resource.respond_to?(:exists?)
-                result = @resource.exists?
-            else
-                raise Puppet::DevError, "No ability to determine if %s exists" %
-                    @resource.class.name
-            end
-            if result
-                return :present
-            else
-                return :absent
-            end
-        end
-
-        # If they're talking about the thing at all, they generally want to
-        # say it should exist.
-        #defaultto :present
-        defaultto do
-            if @resource.managed?
-                :present
-            else
-                nil
-            end
-        end
     end
 end

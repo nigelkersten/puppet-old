@@ -18,7 +18,7 @@ end
 require 'puppettest'
 require 'puppettest/runnable_test'
 require 'mocha'
-gem 'rspec', '=1.2.9'
+gem 'rspec', '>=1.2.9'
 require 'spec/autorun'
 
 # So everyone else doesn't have to include this base constant.
@@ -39,6 +39,20 @@ Spec::Runner.configure do |config|
     config.prepend_after :each do
         Puppet.settings.clear
         Puppet::Node::Environment.clear
+
+        if defined?($tmpfiles)
+            $tmpfiles.each do |file|
+                unless file.include?("/tmp") or file.include?("/var/folders")
+                    puts "Not deleting tmpfile #{file} outside of /tmp or /var/folders"
+                    next
+                end
+                if FileTest.exist?(file)
+                    system("chmod -R 755 '#{file}'")
+                    system("rm -rf '#{file}'")
+                end
+            end
+            $tmpfiles.clear
+        end
     end
 end
 

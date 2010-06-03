@@ -4,7 +4,9 @@ module Puppet
     # use basedirs that are in the user's home directory.
     conf = nil
     var = nil
-    name = $0.gsub(/.+#{File::SEPARATOR}/,'').sub(/\.rb$/, '')
+
+    require 'puppet/util/command_line'
+    name = Puppet::Util::CommandLine.legacy_executable_name
 
     # Make File.expand_path happy
     require 'etc'
@@ -16,7 +18,7 @@ module Puppet
     else
         # Else, use system-wide directories.
         conf = "/etc/puppet"
-        var = "/var/puppet"
+        var = "/var/lib/puppet"
     end
 
     self.setdefaults(:main,
@@ -149,6 +151,8 @@ module Puppet
             huge numbers that can then not be fed back into the system.  This is a hackish way to fail in a
             slightly more useful way when that happens."],
         :node_terminus => ["plain", "Where to find information about nodes."],
+        :catalog_terminus => ["compiler", "Where to get node catalogs.  This is useful to change if, for instance,
+            you'd like to pre-compile catalogs and store them in memcached or some other easily-accessed store."],
         :httplog => { :default => "$logdir/http.log",
             :owner => "root",
             :mode => 0640,
@@ -289,7 +293,9 @@ module Puppet
             :owner => "service",
             :desc => "Where the host's certificate revocation list can be found.
                 This is distinct from the certificate authority's CRL."
-        }
+        },
+        :certificate_revocation => [true, "Whether certificate revocation should be supported by downloading a Certificate Revocation List (CRL)
+            to all clients.  If enabled, CA chaining will almost definitely not work."]
     )
 
     setdefaults(:ca,
@@ -459,6 +465,8 @@ module Puppet
         # it to be in the server section (#1138).
         :yamldir => {:default => "$vardir/yaml", :owner => "service", :group => "service", :mode => "750",
             :desc => "The directory in which YAML data is stored, usually in a subdirectory."},
+        :server_datadir => {:default => "$vardir/server_data", :owner => "service", :group => "service", :mode => "750",
+            :desc => "The directory in which serialized data is stored, usually in a subdirectory."},
         :reports => ["store",
             "The list of reports to generate.  All reports are looked for
             in puppet/reports/<name>.rb, and multiple report names should be
@@ -502,6 +510,8 @@ module Puppet
             },
         :clientyamldir => {:default => "$vardir/client_yaml", :mode => "750",
             :desc => "The directory in which client-side YAML data is stored."},
+        :client_datadir => {:default => "$vardir/client_data", :mode => "750",
+            :desc => "The directory in which serialized data is stored on the client."},
         :classfile => { :default => "$statedir/classes.txt",
             :owner => "root",
             :mode => 0644,
@@ -557,6 +567,10 @@ module Puppet
             new configurations, where you want to fix the broken configuration
             rather than reverting to a known-good one."
         ],
+        :use_cached_catalog => [false,
+            "Whether to only use the cached catalog rather than compiling a new catalog
+            on every run.  Puppet can be run with this enabled by default and then selectively
+            disabled when a recompile is desired."],
         :ignorecache => [false,
             "Ignore cache and always recompile the configuration.  This is
             useful for testing new configurations, where the local cache may in
@@ -607,7 +621,13 @@ module Puppet
         :graph => [false, "Whether to create dot graph files for the different
             configuration graphs.  These dot files can be interpreted by tools
             like OmniGraffle or dot (which is part of ImageMagick)."],
-        :graphdir => ["$statedir/graphs", "Where to store dot-outputted graphs."]
+        :graphdir => ["$statedir/graphs", "Where to store dot-outputted graphs."],
+        :http_compression => [false, "Allow http compression in REST communication with the master.
+            This setting might improve performance for puppetd -> puppetmasterd communications over slow WANs.
+            Your puppetmaster needs to support compression (usually by activating some settings in a reverse-proxy
+            in front of the puppetmaster, which rules out webrick). 
+            It is harmless to activate this settings if your master doesn't support
+            compression, but if it supports it, this setting might reduce performance on high-speed LANs."]
     )
 
     # Plugin information.
@@ -627,7 +647,7 @@ module Puppet
 
     # Central fact information.
     self.setdefaults(:main,
-        :factpath => {:default => "$vardir/facts/",
+        :factpath => {:default => "$vardir/lib/facter/:$vardir/facts",
             :desc => "Where Puppet should look for facts.  Multiple directories should
                 be colon-separated, like normal PATH variables.",
             :call_on_define => true, # Call our hook with the default value, so we always get the value added to facter.
@@ -668,11 +688,13 @@ module Puppet
         :dbadapter => [ "sqlite3", "The type of database to use." ],
         :dbmigrate => [ false, "Whether to automatically migrate the database." ],
         :dbname => [ "puppet", "The name of the database to use." ],
-        :dbserver => [ "localhost", "The database server for Client caching. Only
+        :dbserver => [ "localhost", "The database server for caching. Only
             used when networked databases are used."],
-        :dbuser => [ "puppet", "The database user for Client caching. Only
+        :dbport => [ "", "The database password for caching. Only
             used when networked databases are used."],
-        :dbpassword => [ "puppet", "The database password for Client caching. Only
+        :dbuser => [ "puppet", "The database user for caching. Only
+            used when networked databases are used."],
+        :dbpassword => [ "puppet", "The database password for caching. Only
             used when networked databases are used."],
         :dbsocket => [ "", "The database socket location. Only used when networked
             databases are used.  Will be ignored if the value is an empty string."],
@@ -702,16 +724,7 @@ module Puppet
         ]
     )
 
-    setdefaults(:parser,
-        :typecheck => [true, "Whether to validate types during parsing."],
-        :paramcheck => [true, "Whether to validate parameters during parsing."]
-    )
-
     setdefaults(:main,
-        :casesensitive => [false,
-            "Whether matching in case statements and selectors
-            should be case-sensitive.  Case insensitivity is
-            handled by downcasing all values before comparison."],
         :external_nodes => ["none",
             "An external command that can produce node information.  The output
             must be a YAML dump of a hash, and that hash must have one or both of

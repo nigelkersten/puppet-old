@@ -16,6 +16,85 @@ describe Puppet::Type.type(:file) do
         @file.catalog = @catalog
     end
 
+    describe "when determining if recursion is enabled" do
+        it "should default to recursion being disabled" do
+            @file.should_not be_recurse
+        end
+        [true, "true", 10, "inf", "remote"].each do |value|
+            it "should consider #{value} to enable recursion" do
+                @file[:recurse] = value
+                @file.must be_recurse
+            end
+        end
+
+        [false, "false", 0].each do |value|
+            it "should consider #{value} to disable recursion" do
+                @file[:recurse] = value
+                @file.should_not be_recurse
+            end
+        end
+    end
+
+    describe "#write" do
+
+        it "should propagate failures encountered when renaming the temporary file" do
+            File.stubs(:open)
+
+            File.expects(:rename).raises ArgumentError
+            file = Puppet::Type::File.new(:name => "/my/file", :backup => "puppet")
+
+            file.stubs(:validate_checksum?).returns(false)
+
+            property = stub('content_property', :actual_content => "something", :length => "something".length)
+            file.stubs(:property).with(:content).returns(property)
+
+            lambda { file.write(:content) }.should raise_error(Puppet::Error)
+        end
+
+        it "should delegate writing to the content property" do
+            filehandle = stub_everything 'fh'
+            File.stubs(:open).yields(filehandle)
+            File.stubs(:rename)
+            property = stub('content_property', :actual_content => "something", :length => "something".length)
+            file = Puppet::Type::File.new(:name => "/my/file", :backup => "puppet")
+            file.stubs(:validate_checksum?).returns(false)
+            file.stubs(:property).with(:content).returns(property)
+
+            property.expects(:write).with(filehandle)
+
+            file.write(:content)
+        end
+
+        describe "when validating the checksum" do
+            before { @file.stubs(:validate_checksum?).returns(true) }
+
+            it "should fail if the checksum parameter and content checksums do not match" do
+                checksum = stub('checksum_parameter',  :sum => 'checksum_b')
+                @file.stubs(:parameter).with(:checksum).returns(checksum)
+
+                property = stub('content_property', :actual_content => "something", :length => "something".length, :write => 'checksum_a')
+                @file.stubs(:property).with(:content).returns(property)
+
+                lambda { @file.write :NOTUSED }.should raise_error(Puppet::Error)
+            end
+        end
+
+        describe "when not validating the checksum" do
+            before { @file.stubs(:validate_checksum?).returns(false) }
+
+            it "should not fail if the checksum property and content checksums do not match" do
+                checksum = stub('checksum_parameter',  :sum => 'checksum_b')
+                @file.stubs(:parameter).with(:checksum).returns(checksum)
+
+                property = stub('content_property', :actual_content => "something", :length => "something".length, :write => 'checksum_a')
+                @file.stubs(:property).with(:content).returns(property)
+
+                lambda { @file.write :NOTUSED }.should_not raise_error(Puppet::Error)
+            end
+
+        end
+    end
+
     it "should have a method for determining if the file is present" do
         @file.must respond_to(:exist?)
     end
@@ -89,14 +168,27 @@ describe Puppet::Type.type(:file) do
         file.autorequire.should be_empty
     end
 
+
+    describe "when initializing" do
+        it "should set a desired 'ensure' value if none is set and 'content' is set" do
+            file = Puppet::Type::File.new(:name => "/my/file", :content => "/foo/bar")
+            file[:ensure].should == :file
+        end
+
+        it "should set a desired 'ensure' value if none is set and 'target' is set" do
+            file = Puppet::Type::File.new(:name => "/my/file", :target => "/foo/bar")
+            file[:ensure].should == :symlink
+        end
+    end
+
     describe "when validating attributes" do
-        %w{path backup recurse recurselimit source replace force ignore links purge sourceselect}.each do |attr|
+        %w{path checksum backup recurse recurselimit source replace force ignore links purge sourceselect}.each do |attr|
             it "should have a '#{attr}' parameter" do
                 Puppet::Type.type(:file).attrtype(attr.intern).should == :param
             end
         end
 
-        %w{checksum content target ensure owner group mode type}.each do |attr|
+        %w{content target ensure owner group mode type}.each do |attr|
             it "should have a '#{attr}' property" do
                 Puppet::Type.type(:file).attrtype(attr.intern).should == :property
             end
@@ -762,7 +854,7 @@ describe Puppet::Type.type(:file) do
 
         it "should be able to use the default filebucket without a catalog" do
             file = Puppet::Type::File.new(:name => "/my/file", :backup => "puppet")
-            file.bucket.should be_instance_of(Puppet::Network::Client::Dipper)
+            file.bucket.should be_instance_of(Puppet::FileBucket::Dipper)
         end
 
         it "should look up the filebucket during finish()" do
@@ -772,14 +864,11 @@ describe Puppet::Type.type(:file) do
         end
     end
 
-    describe "when writing the file" do
-        it "should propagate failures encountered when renaming the temporary file" do
-            File.stubs(:open)
-
-            File.expects(:rename).raises ArgumentError
-            file = Puppet::Type::File.new(:name => "/my/file", :backup => "puppet")
-
-            lambda { file.write("something", :content) }.should raise_error(Puppet::Error)
+    describe "when retrieving the current file state" do
+        it "should copy the source values if the 'source' parameter is set" do
+            file = Puppet::Type::File.new(:name => "/my/file", :source => "/foo/bar")
+            file.parameter(:source).expects(:copy_source_values)
+            file.retrieve
         end
     end
 end

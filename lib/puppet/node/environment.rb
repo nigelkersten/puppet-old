@@ -7,12 +7,27 @@ end
 # Model the environment that a node can operate in.  This class just
 # provides a simple wrapper for the functionality around environments.
 class Puppet::Node::Environment
+    module Helper
+        def environment
+            Puppet::Node::Environment.new(@environment)
+        end
+
+        def environment=(env)
+            if env.is_a?(String) or env.is_a?(Symbol)
+                @environment = env
+            else
+                @environment = env.name
+            end
+        end
+    end
+
     include Puppet::Util::Cacher
 
     @seen = {}
 
     # Return an existing environment instance, or create a new one.
     def self.new(name = nil)
+        return name if name.is_a?(self)
         name ||= Puppet.settings.value(:environment)
 
         raise ArgumentError, "Environment name must be specified" unless name
@@ -40,6 +55,14 @@ class Puppet::Node::Environment
 
     def initialize(name)
         @name = name
+    end
+
+    def known_resource_types
+        if @known_resource_types.nil? or @known_resource_types.stale?
+            @known_resource_types = Puppet::Resource::TypeCollection.new(self)
+            @known_resource_types.perform_initial_import
+        end
+        @known_resource_types
     end
 
     def module(name)

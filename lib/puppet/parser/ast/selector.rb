@@ -12,12 +12,9 @@ class Puppet::Parser::AST
 
         # Find the value that corresponds with the test.
         def evaluate(scope)
+            level = scope.ephemeral_level
             # Get our parameter.
             paramvalue = @param.safeevaluate(scope)
-
-            sensitive = Puppet[:casesensitive]
-
-            paramvalue = paramvalue.downcase if not sensitive and paramvalue.respond_to?(:downcase)
 
             default = nil
 
@@ -28,7 +25,7 @@ class Puppet::Parser::AST
             # Then look for a match in the options.
             @values.each do |obj|
                 # short circuit asap if we have a match
-                return obj.value.safeevaluate(scope) if obj.param.evaluate_match(paramvalue, scope, :file => file, :line => line, :sensitive => sensitive)
+                return obj.value.safeevaluate(scope) if obj.param.evaluate_match(paramvalue, scope)
 
                 # Store the default, in case it's necessary.
                 default = obj if obj.param.is_a?(Default)
@@ -39,7 +36,7 @@ class Puppet::Parser::AST
 
             self.fail Puppet::ParseError, "No matching value for selector param '%s'" % paramvalue
         ensure
-            scope.unset_ephemeral_var
+            scope.unset_ephemeral_var(level)
         end
 
         def to_s

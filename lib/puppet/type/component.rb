@@ -14,14 +14,14 @@ Puppet::Type.newtype(:component) do
     # Override how parameters are handled so that we support the extra
     # parameters that are used with defined resource types.
     def [](param)
-        return super if self.class.validattr?(param)
+        return super if self.class.valid_parameter?(param)
         @extra_parameters[param.to_sym]
     end
 
     # Override how parameters are handled so that we support the extra
     # parameters that are used with defined resource types.
     def []=(param, value)
-        return super if self.class.validattr?(param)
+        return super if self.class.valid_parameter?(param)
         @extra_parameters[param.to_sym] = value
     end
 
@@ -40,7 +40,7 @@ Puppet::Type.newtype(:component) do
         if reference.type == "Class"
             # 'main' is the top class, so we want to see '//' instead of
             # its name.
-            if reference.title == "main"
+            if reference.title.to_s.downcase == "main"
                 myname = ""
             else
                 myname = reference.title
@@ -65,7 +65,7 @@ Puppet::Type.newtype(:component) do
     end
 
     def title=(str)
-        @reference = Puppet::Resource::Reference.new(str)
+        @reference = Puppet::Resource.new(str)
     end
 
     def refresh

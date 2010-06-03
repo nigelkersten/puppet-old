@@ -2,8 +2,8 @@
 
 require File.dirname(__FILE__) + '/../../lib/puppettest'
 
-require 'puppettest'
 require 'mocha'
+require 'puppettest'
 
 class TestType < Test::Unit::TestCase
     include PuppetTest
@@ -45,68 +45,6 @@ class TestType < Test::Unit::TestCase
                 )
             }
         }
-    end
-
-    def test_stringvssymbols
-        file = nil
-        path = tempfile()
-        assert_nothing_raised() {
-            system("rm -f %s" % path)
-            file = Puppet::Type.type(:file).new(
-                :path => path,
-                :ensure => "file",
-                :recurse => true,
-                :checksum => "md5"
-            )
-        }
-        assert_nothing_raised() {
-            file.retrieve
-        }
-        assert_nothing_raised() {
-            file.evaluate
-        }
-        assert_nothing_raised() {
-            system("rm -f %s" % path)
-            file = Puppet::Type.type(:file).new(
-                "path" => path,
-                "ensure" => "file",
-                "recurse" => true,
-                "checksum" => "md5"
-            )
-        }
-        assert_nothing_raised() {
-            file.retrieve
-        }
-        assert_nothing_raised() {
-            file[:path]
-        }
-        assert_nothing_raised() {
-            file["path"]
-        }
-        assert_nothing_raised() {
-            file[:recurse]
-        }
-        assert_nothing_raised() {
-            file["recurse"]
-        }
-        assert_nothing_raised() {
-            file.evaluate
-        }
-    end
-
-    # This was supposed to test objects whose name was a property, but that
-    # fundamentally doesn't make much sense, and we now don't have any such
-    # types.
-    def disabled_test_nameasproperty
-        # currently groups are the only objects with the namevar as a property
-        group = nil
-        assert_nothing_raised {
-            group = Puppet::Type.type(:group).new(
-                :name => "testing"
-            )
-        }
-
-        assert_equal("testing", group.name, "Could not retrieve name")
     end
 
     def test_aliases_are_added_to_catalog
@@ -359,17 +297,6 @@ class TestType < Test::Unit::TestCase
         assert_equal((tags << "file").sort, obj.tags.sort)
     end
 
-    def disabled_test_list
-        Puppet::Type.loadall
-
-        Puppet::Type.eachtype do |type|
-            next if type.name == :symlink
-            next if type.name == :component
-            next if type.name == :tidy
-            assert(type.respond_to?(:list), "%s does not respond to list" % type.name)
-        end
-    end
-
     def test_to_hash
         file = Puppet::Type.newfile :path => tempfile(), :owner => "luke",
             :recurse => true, :loglevel => "warning"
@@ -392,58 +319,6 @@ class TestType < Test::Unit::TestCase
 
         exec = Puppet::Type.newexec(:title => "yay", :command => "/bin/echo yay")
         assert_equal("Exec[yay]", exec.ref)
-    end
-
-    def test_path
-        config = mk_catalog
-
-        # Check that our paths are built correctly.  Just pick a random, "normal" type.
-        type = Puppet::Type.type(:exec)
-        mk = Proc.new do |i, hash|
-            hash[:title] = "exec%s" % i
-            hash[:command] = "/bin/echo %s" % i
-            if parent = hash[:parent]
-                hash.delete(:parent)
-            end
-            res = type.create(hash)
-            config.add_resource res
-            if parent
-                config.add_edge(parent, res)
-            end
-            res
-        end
-
-        exec = mk.call(1, {})
-
-        assert_equal("/Exec[exec1]", exec.path)
-
-        comp = Puppet::Type.newcomponent :title => "My[component]", :type => "Yay"
-        config.add_resource comp
-
-        exec = mk.call(2, :parent => comp)
-
-        assert_equal("/My[component]/Exec[exec2]", exec.path)
-
-        comp = Puppet::Type.newcomponent :name => "Other[thing]"
-        config.add_resource comp
-        exec = mk.call(3, :parent => comp)
-        assert_equal("/Other[thing]/Exec[exec3]", exec.path)
-
-        comp = Puppet::Type.newcomponent :type => "server", :name => "server"
-        config.add_resource comp
-        exec = mk.call(4, :parent => comp)
-        assert_equal("/server/Exec[exec4]", exec.path)
-
-        comp = Puppet::Type.newcomponent :type => "whatever", :name => "class[main]"
-        config.add_resource comp
-        exec = mk.call(5, :parent => comp)
-        assert_equal("//Exec[exec5]", exec.path)
-
-        newcomp = Puppet::Type.newcomponent :type => "yay", :name => "Good[bad]"
-        config.add_resource newcomp
-        config.add_edge comp, newcomp
-        exec = mk.call(6, :parent => newcomp)
-        assert_equal("//Good[bad]/Exec[exec6]", exec.path)
     end
 
     # Partially test #704, but also cover the rest of the schedule management bases.
@@ -485,18 +360,14 @@ class TestType < Test::Unit::TestCase
     def test_reschedule_when_noop
         Puppet::Type.type(:schedule).mkdefaultschedules
         file = Puppet::Type.type(:file).new(:path => "/tmp/whatever", :mode => "755", :noop => true, :schedule => :daily, :ensure => :file)
+        catalog = Puppet::Resource::Catalog.new
+        catalog.add_resource
 
         assert(file.noop?, "File not considered in noop")
         assert(file.scheduled?, "File is not considered scheduled")
 
-        file.evaluate
+        catalog.apply
 
-        assert_nil(file.cached(:checked), "Stored a checked time when running in noop mode when there were changes")
-        file.cache(:checked, nil)
-
-        file.stubs(:propertychanges).returns([])
-
-        file.evaluate
-        assert_instance_of(Time, file.cached(:checked), "Did not store a checked time when running in noop mode when there were no changes")
+        assert(file.scheduled?, "File is not considered scheduled even though only a noop run was made")
     end
 end

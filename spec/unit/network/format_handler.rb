@@ -73,8 +73,9 @@ describe Puppet::Network::FormatHandler do
             it "should still return the default format first" do
                 FormatTester.supported_formats.should == [:two, :one]
             end
-            it "should log a warning" do
-                Puppet.expects(:warning)
+            it "should log a debug message" do
+                Puppet.expects(:debug).with("Value of 'preferred_serialization_format' (unsupported) is invalid for FormatTester, using default (two)")
+                Puppet.expects(:debug).with("FormatTester supports formats: one two; using two")
                 FormatTester.supported_formats
             end
         end
@@ -202,6 +203,15 @@ describe Puppet::Network::FormatHandler do
         it "should be able to retrieve a format by name" do
             format = Puppet::Network::FormatHandler.create(:by_name)
             Puppet::Network::FormatHandler.format(:by_name).should equal(format)
+        end
+
+        it "should be able to retrieve a format by extension" do
+            format = Puppet::Network::FormatHandler.create(:by_extension, :extension => "foo")
+            Puppet::Network::FormatHandler.format_by_extension("foo").should equal(format)
+        end
+
+        it "should return nil if asked to return a format by an unknown extension" do
+            Puppet::Network::FormatHandler.format_by_extension("yayness").should be_nil
         end
 
         it "should be able to retrieve formats by name irrespective of case and class" do

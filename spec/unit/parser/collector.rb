@@ -42,7 +42,7 @@ describe Puppet::Parser::Collector, "when initializing" do
 
     it "should accept an optional resource override" do
         @collector = Puppet::Parser::Collector.new(@scope, "resource::type", @equery, @vquery, @form)
-        override = { :params => "whatever" }
+        override = { :parameters => "whatever" }
         @collector.add_override(override)
         @collector.overrides.should equal(override)
     end
@@ -52,11 +52,10 @@ end
 describe Puppet::Parser::Collector, "when collecting specific virtual resources" do
     before do
         @scope = mock 'scope'
-        @resource_type = mock 'resource_type'
         @vquery = mock 'vquery'
         @equery = mock 'equery'
 
-        @collector = Puppet::Parser::Collector.new(@scope, @resource_type, @equery, @vquery, :virtual)
+        @collector = Puppet::Parser::Collector.new(@scope, "resource_type", @equery, @vquery, :virtual)
     end
 
     it "should not fail when it does not find any resources to collect" do
@@ -175,16 +174,16 @@ describe Puppet::Parser::Collector, "when collecting virtual and catalog resourc
         @collector.evaluate.should == [one]
     end
 
-    it "should create a resource with overriden parameters" do
+    it "should create a resource with overridden parameters" do
         one = stub_everything 'one', :type => "Mytype", :virtual? => true, :title => "test"
         param = stub 'param'
         @compiler.stubs(:add_override)
 
         @compiler.expects(:resources).returns([one])
 
-        @collector.add_override(:params => param )
-        Puppet::Parser::Resource.expects(:new).with { |h|
-            h[:params] == param
+        @collector.add_override(:parameters => param )
+        Puppet::Parser::Resource.expects(:new).with { |type, title, h|
+            h[:parameters] == param
         }
 
         @collector.evaluate
@@ -198,7 +197,7 @@ describe Puppet::Parser::Collector, "when collecting virtual and catalog resourc
 
         @compiler.expects(:resources).returns([one])
 
-        @collector.add_override(:params => param, :source => source )
+        @collector.add_override(:parameters => param, :source => source )
         Puppet::Parser::Resource.stubs(:new)
 
         source.expects(:meta_def).with { |name,block| name == :child_of? }
@@ -214,9 +213,9 @@ describe Puppet::Parser::Collector, "when collecting virtual and catalog resourc
 
         @compiler.expects(:resources).at_least(2).returns([one])
 
-        @collector.add_override(:params => param )
-        Puppet::Parser::Resource.expects(:new).once.with { |h|
-            h[:params] == param
+        @collector.add_override(:parameters => param )
+        Puppet::Parser::Resource.expects(:new).once.with { |type, title, h|
+            h[:parameters] == param
         }
 
         @collector.evaluate
@@ -240,7 +239,7 @@ describe Puppet::Parser::Collector, "when collecting virtual and catalog resourc
 
         one.expects(:virtual=).with(false)
         @compiler.expects(:resources).returns([one])
-        @collector.add_override(:params => param )
+        @collector.add_override(:parameters => param )
         Puppet::Parser::Resource.stubs(:new).returns("whatever")
 
         @compiler.expects(:add_override).with("whatever")
@@ -267,14 +266,18 @@ describe Puppet::Parser::Collector, "when collecting exported resources" do
     confine "Cannot test Rails integration without ActiveRecord" => Puppet.features.rails?
 
     before do
-        @scope = stub 'scope', :host => "myhost", :debug => nil
-        @compiler = mock 'compile'
-        @scope.stubs(:compiler).returns(@compiler)
+        @compiler = Puppet::Parser::Compiler.new(Puppet::Node.new("mynode"))
+        @scope = Puppet::Parser::Scope.new :compiler => @compiler
         @resource_type = "Mytype"
         @equery = "test = true"
         @vquery = proc { |r| true }
 
+        res = stub("resource 1")
+        res.stubs(:type).returns @resource_type
+        Puppet::Resource.stubs(:new).returns res
+
         Puppet.settings.stubs(:value).with(:storeconfigs).returns true
+        Puppet.settings.stubs(:value).with(:environment).returns "production"
 
         @collector = Puppet::Parser::Collector.new(@scope, @resource_type, @equery, @vquery, :exported)
     end
@@ -361,7 +364,7 @@ describe Puppet::Parser::Collector, "when collecting exported resources" do
         one = stub 'one', :restype => "Mytype", :title => "one", :virtual? => true, :exported? => true, :ref => "one"
         Puppet::Rails::Resource.stubs(:find).returns([one])
 
-        resource = mock 'resource'
+        resource = mock 'resource', :type => "Mytype"
         one.expects(:to_resource).with(@scope).returns(resource)
         resource.stubs(:exported=)
         resource.stubs(:virtual=)
@@ -375,9 +378,9 @@ describe Puppet::Parser::Collector, "when collecting exported resources" do
         @compiler.stubs(:add_override)
         @compiler.stubs(:add_resource)
 
-        @collector.add_override(:params => param )
-        Puppet::Parser::Resource.expects(:new).once.with { |h|
-            h[:params] == param
+        @collector.add_override(:parameters => param )
+        Puppet::Parser::Resource.expects(:new).once.with { |type, title, h|
+            h[:parameters] == param
         }
 
         @collector.evaluate
